@@ -116,6 +116,8 @@ services:
     volumes: ["${ACME_STORAGE_DIR:-./letsencrypt}:/letsencrypt:ro"]
     networks: [proxy]
     cap_drop: [ALL]
+    # Read a mode-0600 ACME store regardless of the operator/Traefik file owner.
+    cap_add: [DAC_READ_SEARCH]
     security_opt: [no-new-privileges:true]
     read_only: true
     tmpfs: [/tmp]

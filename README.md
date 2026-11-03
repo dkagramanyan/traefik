@@ -163,7 +163,9 @@ in the OpenVPN relay engine.
 Setup enables the `profile-signing` Compose profile and generates its shared
 token if missing. The signer builds from a pinned public application revision,
 reads the ACME directory through a read-only mount and reloads renewed identities.
-It needs no second source checkout and exposes no host port.
+It needs no second source checkout and exposes no host port. Its read-only
+filesystem capability lets it read a mode-0600 ACME store owned by either the
+setup user or Traefik; the certificate directory is mounted read-only.
 
 Only `SIGNER_SOURCE_CIDRS` may call the HTTPS signing path, and a shared token is
 also required. Setup derives that source range from the OpenVPN backend's literal

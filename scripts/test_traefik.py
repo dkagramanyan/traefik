@@ -96,6 +96,18 @@ socketserver.TCPServer(("0.0.0.0",8444),Echo).serve_forever()
             values["TRUSTED_CIDRS"] += "," + trusted_ip + "/32"
             materialize(folder, values)
             compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+            # The bootstrap user and Traefik can have different file ownership.
+            # Exercise the signer's actual read-only capability with a private store.
+            private_store = folder / "private-store-test"
+            private_store.write_text("operator-owned-test-store")
+            private_store.chmod(0o600)
+            caps = []
+            for capability in compose["services"]["profile-signer"].get("cap_add", []):
+                caps.extend(["--cap-add", capability])
+            run("docker", "run", "--rm", "--cap-drop", "ALL", *caps, "--read-only",
+                "-v", f"{private_store}:/letsencrypt/acme.json:ro", python_image, "python", "-c",
+                'assert open("/letsencrypt/acme.json").read() == "operator-owned-test-store"')
+            print("PASS: signer permissions read an operator-owned private ACME store through a read-only mount")
             # Resolve production CLI interpolation through Compose itself.
             (folder / "docker-compose.yml").write_text((ROOT / "docker-compose.yml").read_text())
             resolved = json.loads(run("docker", "compose", "--project-directory", str(folder), "config", "--format", "json"))
