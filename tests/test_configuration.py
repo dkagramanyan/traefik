@@ -92,7 +92,7 @@ def deployment(path):
     (path / "dynamic").mkdir()
     (path / "dynamic/native-services.yml").write_text(yaml.safe_dump({
         "http": {"services": {"openvpn": {"loadBalancer": {"servers": [{"url": "http://192.0.2.30:8080"}]}}},
-                 "middlewares": {"trusted-only": {"ipAllowList": {"sourceRange": ["192.0.2.0/24", "10.0.70.0/25"]}}}},
+                 "middlewares": {"trusted-only": {"ipAllowList": {"sourceRange": ["192.0.2.0/24", "10.8.0.0/25"]}}}},
         "tcp": {"routers": {"apple-relay": {"rule": "HostSNI(`example.test`)"}},
                 "services": {"apple-relay": {"loadBalancer": {"servers": [{"address": "192.0.2.30:8444"}]}}}},
     }))
@@ -115,7 +115,7 @@ def test_import_preserves_routes_credentials_certificates_and_networks(tmp_path)
     assert values["SELECTELV2_PASSWORD"] == "preserve-this-provider-secret"
     assert values["ACME_DNS_RESOLVERS"] == "a.ns.example.test:53"
     assert values["BACKEND_OPENVPN"] == "http://192.0.2.30:8080"
-    assert values["TRUSTED_CIDRS"] == "192.0.2.0/24,10.0.70.0/25"
+    assert values["TRUSTED_CIDRS"] == "192.0.2.0/24,10.8.0.0/25"
     assert values["SIGNER_SOURCE_CIDRS"] == "192.0.2.30/32"
     assert values["BACKEND_HOST_ALIAS"] == "gateway"
     assert json.loads(values["EXTRA_TLS_CERTIFICATES"])[0]["keyFile"] == "/certs/extra.key"

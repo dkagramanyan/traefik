@@ -3,7 +3,7 @@
 !.env.example
 letsencrypt/
 certs/
-kuma_api_key
+*_api_key
 prometheus.yml.bak
 prometheus-data/
 grafana-data/
@@ -22,3 +22,6 @@ __pycache__/
 state/
 traefik.yml
 prometheus.yml
+
+*.private.json
+dynamic/imported-private.yml

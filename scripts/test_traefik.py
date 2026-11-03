@@ -52,7 +52,10 @@ def main():
                 if key.startswith("BACKEND_") and key not in ("BACKEND_HOST_ALIAS", "BACKEND_HOST_ADDRESS"):
                     values[key] = "http://backend:8000"
             values["APPLE_RELAY_BACKEND"] = "backend:8444"
-            values["ZORAXY_TLS_BACKEND"] = "backend:443"
+            values["SERVICE_ROUTES_JSON"] = json.dumps([
+                {"name": "private", "host": "private.example.test", "url": "http://backend:8000", "public": False, "paths": [], "insecure_tls": False},
+                {"name": "public", "host": "public.example.test", "url": "http://backend:8000", "public": True, "paths": [], "insecure_tls": False},
+            ])
             materialize(folder, values)
             run("openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-days", "1",
                 "-subj", "/CN=example.test", "-addext", "subjectAltName=DNS:example.test,DNS:*.example.test",
@@ -138,11 +141,11 @@ socketserver.TCPServer(("0.0.0.0",8444),Echo).serve_forever()
                 http = json.loads(get(f"http://127.0.0.1:{api_port}/api/http/routers"))
                 tcp = json.loads(get(f"http://127.0.0.1:{api_port}/api/tcp/routers"))
                 found = {r["name"]: r for r in http + tcp if r["name"].endswith("@file")}
-                return found if len(found) == 23 and all(r["status"] == "enabled" for r in found.values()) else None
-            loaded = eventually(routes, "22 enabled portable routes")
-            for name in ("podkop", "kuma", "zoraxy", "transmission", "omada", "openvpn", "openvpn-legacy", "openvpn-orig", "luci-main", "luci-reserv", "plex", "proxmox", "grafana", "tecno"):
+                return found if len(found) == 7 and all(r["status"] == "enabled" for r in found.values()) else None
+            loaded = eventually(routes, "enabled core and synthetic service routes")
+            for name in ("openvpn", "custom-private"):
                 assert "trusted-only@file" in loaded[name + "@file"]["middlewares"]
-            # Public portal forwards; management remains denied from the test bridge.
+            # Unlisted sources cannot reach the portal or management APIs.
             proxy_ip = run("docker", "inspect", proxy, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
             client = start("client", python_image, "sleep", "120", options=("--add-host", "openvpn.example.test:" + proxy_ip, "--add-host", "dashboard.example.test:" + proxy_ip))
             request_code = '''import urllib.request,urllib.error
@@ -152,9 +155,9 @@ try:
  print(r.status,r.read().decode())
 except urllib.error.HTTPError as e: print(e.code)
 '''
-            assert run("docker", "exec", client, "python", "-c", request_code, "/portal").startswith("200 backend-ok")
+            assert run("docker", "exec", client, "python", "-c", request_code, "/portal") == "403"
             assert run("docker", "exec", client, "python", "-c", request_code, "/api/clients") == "403"
-            assert run("docker", "exec", client, "python", "-c", request_code, "/api/portal/me").startswith("200 backend-ok")
+            assert run("docker", "exec", client, "python", "-c", request_code, "/api/portal/me") == "403"
             trusted_code = '''import socket,ssl,sys
 s=ssl._create_unverified_context().wrap_socket(socket.create_connection((sys.argv[1],443),timeout=5),server_hostname="openvpn.example.test")
 s.sendall(b"GET /api/clients HTTP/1.1\\r\\nHost: openvpn.example.test\\r\\nConnection: close\\r\\n\\r\\n")
@@ -171,9 +174,7 @@ except urllib.error.HTTPError as e: print(e.code)
             bad_auth = base64.b64encode(b"test:wrong-password").decode()
             assert run("docker", "exec", client, "python", "-c", dashboard_code, good_auth) == "200"
             assert run("docker", "exec", client, "python", "-c", dashboard_code, bad_auth) == "401"
-            # Explicit HTTP fallback and redirect priorities remain intact.
-            http_port = port(proxy, 80)
-            assert get(f"http://127.0.0.1:{http_port}/", {"Host": "outside.example.org"}) == b"backend-ok"
+
             # Real TLS termination, h2 ALPN and bidirectional relay bytes.
             context = ssl.create_default_context(cafile=str(folder / "test.crt"))
             context.set_alpn_protocols(["h2"])
@@ -182,7 +183,7 @@ except urllib.error.HTTPError as e: print(e.code)
                 message = b"relay-forwarding-check"
                 connection.sendall(message)
                 assert connection.recv(4096) == message
-            print("PASS: 22 routes, private access rules, public portal, fallback and TLS/h2 relay forwarding")
+            print("PASS: private access rules, private portal, configured services and TLS/h2 relay forwarding")
             # Run the actual agent command, with a real remote-write receiver.
             agent_options = ("--user", values["LOCAL_UID"] + ":" + values["LOCAL_GID"],
                              "-v", f"{folder / '.runtime'}:/etc/prometheus:ro", "-v", f"{folder / 'state/metrics-agent'}:/prometheus")

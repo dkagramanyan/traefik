@@ -1,9 +1,15 @@
-# Public client-only downloads; administrative APIs retain trusted-only.
+# Private client downloads. Missing PORTAL_CIDRS falls back to trusted networks.
 http:
   routers:
     user-portal:
       rule: {{ printf "Host(`%s`) && (Path(`/portal`) || Path(`/api/portal`) || PathPrefix(`/api/portal/`) || PathPrefix(`/static/`))" (env "OPENVPN_HOST") | toJson }}
       priority: 200
-      entryPoints: [websecure]
+      entryPoints: [websecure, portal]
       service: openvpn
+      middlewares: [portal-only]
       tls: {}
+  middlewares:
+    portal-only:
+      ipAllowList:
+        # Match the connection source, never an untrusted X-Forwarded-For header.
+        sourceRange: {{ env "PORTAL_CIDRS" | default (env "TRUSTED_CIDRS") | splitList "," | toJson }}

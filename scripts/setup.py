@@ -13,6 +13,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--domain")
     parser.add_argument("--email")
+    parser.add_argument("--network-file", type=Path, help="Private export from the OpenVPN Settings UI")
     imports = parser.add_mutually_exclusive_group()
     imports.add_argument("--import-from", type=Path)
     imports.add_argument("--import-revision", help="Import tracked legacy config from a previous Git revision")
@@ -31,9 +32,9 @@ def main():
                 if not (source / "docker-compose.yml").exists():
                     raise ValueError("The import revision does not contain docker-compose.yml")
                 if (ROOT / ".env").exists(): shutil.copy2(ROOT / ".env", source / ".env")
-                values = prepare(root=ROOT, import_from=source, domain=args.domain, email=args.email)
+                values = prepare(root=ROOT, import_from=source, domain=args.domain, email=args.email, network_file=args.network_file)
         else:
-            values = prepare(root=ROOT, import_from=args.import_from, domain=args.domain, email=args.email)
+            values = prepare(root=ROOT, import_from=args.import_from, domain=args.domain, email=args.email, network_file=args.network_file)
         missing = materialize(ROOT, values)
     except (ValueError, OSError) as exc:
         parser.exit(1, f"Setup stopped: {exc}\n")

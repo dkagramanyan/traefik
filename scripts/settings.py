@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 import yaml
 import bcrypt
+import network_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -104,6 +105,19 @@ def import_existing(folder):
     if password and "${" not in password and not values.get("GRAFANA_ADMIN_PASSWORD"):
         values["GRAFANA_ADMIN_PASSWORD"] = password
     native = load_yaml(folder / "dynamic/native-services.yml")
+    if native:
+        # Preserve old inventories locally during adoption; none are shipped as defaults.
+        private = json.loads(json.dumps(native))
+        http_private = private.get("http", {})
+        http_private["routers"] = {k: v for k, v in http_private.get("routers", {}).items()
+                                   if v.get("service") not in ("openvpn", "noop@internal") and k != "user-portal"}
+        for group, names in (("services", ("openvpn",)), ("middlewares", ("trusted-only", "https-redirect")),
+                             ("serversTransports", ("insecure-backend",))):
+            for name in names: http_private.get(group, {}).pop(name, None)
+        for group in ("routers", "services"):
+            private.get("tcp", {}).get(group, {}).pop("apple-relay", None)
+        private.get("tls", {}).get("options", {}).pop("apple-relay-http2", None)
+        values.setdefault("IMPORTED_DYNAMIC_JSON", json.dumps(private))
     http = native.get("http", {})
     for name, service in http.get("services", {}).items():
         servers = service.get("loadBalancer", {}).get("servers", [])
@@ -117,7 +131,7 @@ def import_existing(folder):
     if domain:
         values.setdefault("DOMAIN", domain.group(1))
         values.setdefault("APPLE_RELAY_HOST", domain.group(1))
-    for name, key in (("apple-relay", "APPLE_RELAY_BACKEND"), ("fallback-zoraxy", "ZORAXY_TLS_BACKEND")):
+    for name, key in (("apple-relay", "APPLE_RELAY_BACKEND"),):
         servers = native.get("tcp", {}).get("services", {}).get(name, {}).get("loadBalancer", {}).get("servers", [])
         if servers: values.setdefault(key, servers[0]["address"])
     certs = load_yaml(folder / "dynamic/certs.yml").get("tls", {}).get("certificates", [])
@@ -141,7 +155,7 @@ def password_hash(username, password):
     return username + ":" + bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
-def prepare(root=ROOT, import_from=None, domain=None, email=None, hasher=password_hash, use_local_env=True):
+def prepare(root=ROOT, import_from=None, domain=None, email=None, hasher=password_hash, use_local_env=True, network_file=None):
     root = Path(root)
     source = Path(import_from) if import_from else root
     defaults = read_env(root / ".env.example")
@@ -151,6 +165,8 @@ def prepare(root=ROOT, import_from=None, domain=None, email=None, hasher=passwor
     # Blank placeholders must not suppress detected values during first migration.
     for key, value in imported.items():
         if not current.get(key): values[key] = value
+    if network_file:
+        values.update(network_settings.from_file(Path(network_file)))
     if domain: values["DOMAIN"] = domain
     if email: values["ACME_EMAIL"] = email
     domain = values.get("DOMAIN", "").strip().lower().rstrip(".")
@@ -164,6 +180,7 @@ def prepare(root=ROOT, import_from=None, domain=None, email=None, hasher=passwor
     }
     for key, value in derived.items():
         if not values.get(key): values[key] = value
+    values["SERVICE_ROUTES_JSON"] = json.dumps(network_settings.services(json.loads(values.get("SERVICE_ROUTES_JSON", "[]")), {values["OPENVPN_HOST"], "dashboard." + domain}))
     if not values.get("OVPN_RELAY_SIGNER_URL"):
         values["OVPN_RELAY_SIGNER_URL"] = "https://" + values["OPENVPN_HOST"] + "/internal/relay-sign"
     if not values.get("APPLE_RELAY_URL"):
@@ -175,8 +192,13 @@ def prepare(root=ROOT, import_from=None, domain=None, email=None, hasher=passwor
             values["SIGNER_SOURCE_CIDRS"] = str(address) + ("/32" if address.version == 4 else "/128")
         except ValueError:
             values["SIGNER_SOURCE_CIDRS"] = "127.0.0.1/32"
-    for key in ("TRUSTED_CIDRS", "SIGNER_SOURCE_CIDRS"):
+    for key in ("TRUSTED_CIDRS", "SIGNER_SOURCE_CIDRS", "PORTAL_CIDRS"):
+        if key == "PORTAL_CIDRS" and not values.get(key, "").strip():
+            values[key] = ""
+            continue
         networks = [str(ipaddress.ip_network(value.strip(), strict=False)) for value in values[key].split(",")]
+        if key == "PORTAL_CIDRS" and any(ipaddress.ip_network(value).prefixlen == 0 for value in networks):
+            raise ValueError("PORTAL_CIDRS must not allow the entire internet (a /0 network)")
         values[key] = ",".join(networks)
     certs = json.loads(values.get("EXTRA_TLS_CERTIFICATES", "[]"))
     if not isinstance(certs, list) or any(not isinstance(v, dict) or not {"certFile", "keyFile"} <= v.keys() for v in certs):
@@ -219,6 +241,16 @@ def materialize(root, values, previous=None):
     env = root / ".env"
     if previous is None: previous = env.read_text() if env.exists() else ""
     write_env(env, values, previous)
+    if "IMPORTED_DYNAMIC_JSON" in values:
+        private = json.loads(values["IMPORTED_DYNAMIC_JSON"])
+        target = root / "dynamic/imported-private.yml"
+        if private:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w") as stream: stream.write(json.dumps(private))
+        elif target.exists():
+            target.unlink()
     for key in ("ACME_STORAGE_DIR", "CERTIFICATES_DIR"):
         (root / values[key]).mkdir(parents=True, exist_ok=True)
     acme = root / values["ACME_STORAGE_DIR"] / "acme.json"

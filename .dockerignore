@@ -6,5 +6,5 @@
 state/
 letsencrypt/
 certs/
-kuma_api_key
+*_api_key
 migration-backups/

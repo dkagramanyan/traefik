@@ -1,8 +1,8 @@
 # Traefik server
 
 A portable Docker Compose gateway for a Linux server, VPS or ARM host. It keeps
-HTTP/HTTPS routing, private-service access rules, the secondary proxy fallback,
-Grafana, automatic DNS-challenge certificates, and Apple Network Relay forwarding
+HTTP/HTTPS routing, private-service access rules, optional monitoring,
+automatic DNS-challenge certificates, and Apple Network Relay forwarding
 and profile signing. Domains, backend addresses, access networks and credentials
 come from a local `.env`.
 
@@ -21,8 +21,8 @@ cd traefik
 ./manage setup --domain example.com --email admin@example.com
 ```
 
-Edit `.env` to supply DNS-provider credentials, reachable backend URLs and trusted
-networks. Setup generates missing dashboard/Grafana passwords and the signing
+Supply DNS-provider credentials privately. Import network settings from the
+admin UI as described below. Setup generates missing dashboard/Grafana passwords and the signing
 token once, derives hostnames and URLs, and creates local directories. It keeps
 existing values. Generated credentials are stored in `.env` with mode `0600` and
 are never printed. Setup does not contact your DNS provider or start containers.
@@ -77,7 +77,7 @@ sudo docker compose up -d --build --remove-orphans
 
 `--remove-orphans` removes the previous Prometheus container. Its old data volume
 is retained. Do not run `docker compose down -v` during migration. The previous
-Kuma/wiki/home-PC scraping jobs belong on your central monitoring server; this
+application scraping jobs belong on your central monitoring server; this
 worker monitors Traefik only. Point Grafana data sources at your central query
 server; the agent has no query API. The backup retains the old Prometheus YAML.
 
@@ -110,8 +110,9 @@ services or change the signer build.
 | `DASHBOARD_AUTH` | Existing or generated bcrypt dashboard login hash |
 | `DASHBOARD_USERNAME`, `DASHBOARD_PASSWORD` | Generated dashboard login when no hash exists |
 | `GRAFANA_ADMIN_PASSWORD` | Existing or generated Grafana initialization password |
-| `BACKEND_*`, `ZORAXY_TLS_BACKEND` | Each service's independent backend address |
+| `BACKEND_OPENVPN`, `SERVICE_ROUTES_JSON` | Core backend and private UI-generated service inventory |
 | `TRUSTED_CIDRS` | Comma-separated source networks allowed into private websites |
+| `PORTAL_CIDRS` | Portal-only source networks, including permitted guests; empty uses `TRUSTED_CIDRS` |
 | `BACKEND_HOST_ALIAS`, `BACKEND_HOST_ADDRESS` | Optional legacy hostname mapping |
 | `HTTP_PORT`, `HTTPS_PORT`, `APPLE_RELAY_PORT`, `LISTEN_ADDRESS` | Host port bindings |
 | `TRAEFIK_NETWORK`, `COMPOSE_PROJECT_NAME` | Docker networking and existing volume ownership |
@@ -156,26 +157,66 @@ Certificates supplied as local `.crt`/`.key` files retain their existing renewal
 process. Traefik serves them and reloads changes; it does not renew arbitrary
 imported file certificates through ACME.
 
-## Existing routes and Apple relay
+## Network settings from the admin UI
 
-* HTTP 80 redirects the primary domain to HTTPS. Other domains still pass to the
-  secondary proxy, including its HTTP challenge handling.
-* HTTPS 443 keeps the existing public status routes and diagnostic `whoami`,
-  private website routes, and encrypted TCP fallback for other domains.
-* Private website requests use `TRUSTED_CIDRS`. Import retains the existing LAN,
-  WireGuard and full-access OpenVPN ranges, excluding guest VPN addresses.
-* `/portal`, `/api/portal` and static files on `OPENVPN_HOST` are public. The
-  OpenVPN application checks user authentication and ownership; management APIs
-  keep their private access rule.
-* Apple relay TLS terminates on `APPLE_RELAY_PORT` with ALPN `h2`; its TCP router
-  forwards decrypted HTTP/2 to `APPLE_RELAY_BACKEND`. Keep this backend hop on a
-  trusted network. An ordinary HTTP router cannot replace this CONNECT route.
+The repository ships no LAN inventory. Configure addresses, domains and additional
+services in the OpenVPN admin UI under **Settings → Network and private portal**.
+Network settings are private runtime data, not source code or test fixtures.
 
-Forward public TCP 80, 443 and the configured relay port to this server. Keep
-`APPLE_RELAY_HOST` covered by the primary domain certificate. If moving the
-proxy to a different address, update `APPLE_RELAY_TRUSTED_PROXIES` on the OpenVPN
-host to the new proxy's actual source IP. Backend guest/full access checks remain
-in the OpenVPN relay engine.
+1. Enter the gateway domain, OpenVPN website hostname/backend, relay TLS
+   hostname/backend, and the networks permitted to access private services.
+2. Add your own services with **Add service**. They are private by default. An
+   optional path list limits a route; a trailing slash includes child paths.
+3. Save, then choose **Download saved Traefik settings**. Copy the resulting
+   `network.private.json` privately to the gateway and run:
+
+   ```sh
+   ./manage setup --network-file /path/to/network.private.json
+   sudo docker compose config --quiet && sudo docker compose up -d traefik
+   ```
+
+The importer validates the file, preserves existing credentials and writes the
+necessary values to the gateway's ignored, mode-0600 `.env`. You do not enter
+network values in `.env` manually. DNS-provider credentials remain private setup
+secrets. Export files are ignored by Git; keep them private after download.
+The application cannot directly configure a separate gateway without a management
+connection, so transferring the generated file is an explicit deployment step.
+
+Before upgrading an older deployment, retain a private configuration backup.
+Adoption of a literal legacy routing file preserves additional routes in ignored
+`dynamic/imported-private.yml`. A complete UI export replaces that imported
+inventory with the services entered in the UI. Configure all desired services
+before importing. Never commit generated runtime configuration.
+
+### Private portal for LAN, OpenVPN guests and Apple Relay guests
+
+Enter the portal hostname, dedicated LAN listener address/port, and every IPv4
+address its DNS can return. Use a dedicated port such as 9443, not the gateway's
+normal HTTPS port or the application's direct backend port. Enter the portal's
+allowed source networks, including the VPN/relay server's actual egress address.
+Leave the regular private-service networks limited to administrators/full-access
+clients. Keep the dedicated listener off WAN port forwards.
+
+Deploy the downloaded Traefik settings first. Then save the private portal as
+**enabled** and use **Save and restart VPN**. This briefly reconnects VPN clients.
+The same UI stores the VPN subnet, dynamic pool, guest range, DNS, pushed routes,
+LAN blocks, extra guest blocks and trusted proxy addresses. Relay changes apply
+to new requests and to existing connections through periodic authorization.
+
+The URL remains `https://your-portal-host/portal`. OpenVPN redirects only guest
+TCP 443 traffic to the explicitly configured addresses; authenticated relay
+clients use the same dedicated listener. Its HTTP router serves only portal
+pages, APIs and assets. Administrative paths have no router on that listener.
+The public HTTPS listener requires an allowed source address for the portal.
+Source filtering uses the connection address, not client-supplied forwarded
+headers. Preserve public client addresses through any upstream proxy/NAT.
+
+Verify after deployment: LAN and both guest transports can log in/download;
+admin paths fail through guest transports; an external connection with VPN/relay
+disabled receives 403 for `/portal`. The dedicated listener must return 404 for
+`/api/clients`, even from an allowed LAN source. Existing guest IPv6 restrictions
+remain in effect. First-time users receive their initial profile privately or
+access the portal from the LAN.
 
 ### Automatic profile signing
 

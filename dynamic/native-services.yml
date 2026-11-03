@@ -1,265 +1,82 @@
 {{- if not (env "BACKEND_OPENVPN") -}}
-{{- fail "Recreate Traefik after running setup so it receives the backend environment settings" -}}
+{{- fail "Run setup and recreate Traefik so it receives its private network settings" -}}
 {{- end }}
-# Portable routes. Domains, backend addresses and trusted ranges come from .env.
-# The TCP relay terminates TLS; the fallback keeps TLS encrypted.
+# No deployment inventory is shipped. Additional routes come from the admin UI.
 http:
   routers:
-    status:
-      rule: {{ printf "Host(`status.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: kuma
-      tls: {}
-    kuma-status:
-      rule: {{ printf "Host(`kuma.%s`) && (PathPrefix(`/status/`) || PathPrefix(`/assets/`) || PathPrefix(`/api/status-page/`) || PathPrefix(`/api/badge/`) || PathPrefix(`/upload/`) || Path(`/icon.svg`) || Path(`/favicon.ico`) || Path(`/apple-touch-icon.png`) || Path(`/manifest.json`))" (env "DOMAIN") | toJson }}
-      priority: 100
-      entryPoints:
-      - websecure
-      service: kuma
-      tls: {}
-    whoami:
-      rule: {{ printf "Host(`whoami.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: whoami
-      tls: {}
-    podkop:
-      rule: {{ printf "Host(`podkop.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: podkop
-      middlewares:
-      - trusted-only
-      tls: {}
-    kuma:
-      rule: {{ printf "Host(`kuma.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: kuma
-      middlewares:
-      - trusted-only
-      tls: {}
-    zoraxy:
-      rule: {{ printf "Host(`zoraxy.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: zoraxy
-      middlewares:
-      - trusted-only
-      tls: {}
-    transmission:
-      rule: {{ printf "Host(`transmission.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: transmission
-      middlewares:
-      - trusted-only
-      tls: {}
-    omada:
-      rule: {{ printf "Host(`omada.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: omada
-      middlewares:
-      - trusted-only
-      tls: {}
     openvpn:
       rule: {{ printf "Host(`%s`)" (env "OPENVPN_HOST") | toJson }}
-      entryPoints:
-      - websecure
+      entryPoints: [websecure]
       service: openvpn
-      middlewares:
-      - trusted-only
+      middlewares: [trusted-only]
       tls: {}
-    openvpn-legacy:
-      rule: {{ printf "Host(`openvpn-legacy.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: openvpn-legacy
-      middlewares:
-      - trusted-only
-      tls: {}
-    openvpn-orig:
-      rule: {{ printf "Host(`openvpn-orig.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: openvpn-orig
-      middlewares:
-      - trusted-only
-      tls:
-        certResolver: letsencrypt
-    luci-main:
-      rule: {{ printf "Host(`luci-main.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: luci-main
-      middlewares:
-      - trusted-only
-      tls: {}
-    luci-reserv:
-      rule: {{ printf "Host(`luci-reserv.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: luci-reserv
-      middlewares:
-      - trusted-only
-      tls: {}
-    plex:
-      rule: {{ printf "Host(`plex.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: plex
-      middlewares:
-      - trusted-only
-      tls: {}
-    proxmox:
-      rule: {{ printf "Host(`proxmox.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: proxmox
-      middlewares:
-      - trusted-only
-      tls: {}
-    grafana:
-      rule: {{ printf "Host(`grafana.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: grafana
-      middlewares:
-      - trusted-only
-      tls: {}
-    tecno:
-      rule: {{ printf "Host(`tecno.%s`)" (env "DOMAIN") | toJson }}
-      entryPoints:
-      - websecure
-      service: tecno
-      middlewares:
-      - trusted-only
-      tls: {}
-    redirect-dgk-http:
-      rule: {{ printf "HostRegexp(`^(.+\\.)?%s$`)" (regexQuoteMeta (env "DOMAIN")) | toJson }}
-      priority: 2
-      entryPoints:
-      - web
+    https-redirect:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [web]
       service: noop@internal
-      middlewares:
-      - https-redirect
-    fallback-zoraxy-http:
-      rule: {{ printf "!HostRegexp(`^(.+\\.)?%s$`)" (regexQuoteMeta (env "DOMAIN")) | toJson }}
-      priority: 1
-      entryPoints:
-      - web
-      service: fallback-zoraxy-http
+      middlewares: [https-redirect]
+    {{- range (env "SERVICE_ROUTES_JSON" | default "[]" | fromJson) }}
+    {{ printf "custom-%s" .name | toJson }}:
+      {{- $rule := printf "Host(`%s`)" .host }}
+      {{- if .paths }}
+      {{- $matches := list }}
+      {{- range .paths }}
+      {{- if hasSuffix "/" . }}
+      {{- $matches = append $matches (printf "PathPrefix(`%s`)" .) }}
+      {{- else }}
+      {{- $matches = append $matches (printf "Path(`%s`)" .) }}
+      {{- end }}
+      {{- end }}
+      {{- $rule = printf "%s && (%s)" $rule (join " || " $matches) }}
+      {{- end }}
+      rule: {{ $rule | toJson }}
+      entryPoints: [websecure]
+      service: {{ printf "custom-%s" .name | toJson }}
+      {{- if not .public }}
+      middlewares: [trusted-only]
+      {{- end }}
+      tls: {}
+    {{- end }}
   services:
-    podkop:
-      loadBalancer:
-        servers:
-        - url: {{ env "BACKEND_PODKOP" | toJson }}
-    kuma:
-      loadBalancer:
-        servers:
-        - url: {{ env "BACKEND_KUMA" | toJson }}
-    whoami:
-      loadBalancer:
-        servers:
-        - url: {{ env "BACKEND_WHOAMI" | toJson }}
-    zoraxy:
-      loadBalancer:
-        servers:
-        - url: {{ env "BACKEND_ZORAXY" | toJson }}
-    fallback-zoraxy-http:
-      loadBalancer:
-        passHostHeader: true
-        servers:
-        - url: {{ env "BACKEND_FALLBACK_ZORAXY_HTTP" | toJson }}
-    transmission:
-      loadBalancer:
-        servers:
-        - url: {{ env "BACKEND_TRANSMISSION" | toJson }}
-    omada:
-      loadBalancer:
-        serversTransport: insecure-backend
-        servers:
-        - url: {{ env "BACKEND_OMADA" | toJson }}
     openvpn:
       loadBalancer:
         servers:
         - url: {{ env "BACKEND_OPENVPN" | toJson }}
-    tecno:
+    {{- range (env "SERVICE_ROUTES_JSON" | default "[]" | fromJson) }}
+    {{ printf "custom-%s" .name | toJson }}:
       loadBalancer:
-        servers:
-        - url: {{ env "BACKEND_TECNO" | toJson }}
-    openvpn-legacy:
-      loadBalancer:
-        servers:
-        - url: {{ env "BACKEND_OPENVPN_LEGACY" | toJson }}
-    openvpn-orig:
-      loadBalancer:
+        {{- if .insecure_tls }}
         serversTransport: insecure-backend
+        {{- end }}
         servers:
-        - url: {{ env "BACKEND_OPENVPN_ORIG" | toJson }}
-    luci-main:
-      loadBalancer:
-        servers:
-        - url: {{ env "BACKEND_LUCI_MAIN" | toJson }}
-    luci-reserv:
-      loadBalancer:
-        servers:
-        - url: {{ env "BACKEND_LUCI_RESERV" | toJson }}
-    plex:
-      loadBalancer:
-        servers:
-        - url: {{ env "BACKEND_PLEX" | toJson }}
-    proxmox:
-      loadBalancer:
-        serversTransport: insecure-backend
-        servers:
-        - url: {{ env "BACKEND_PROXMOX" | toJson }}
-    grafana:
-      loadBalancer:
-        servers:
-        - url: {{ env "BACKEND_GRAFANA" | toJson }}
+        - url: {{ .url | toJson }}
+    {{- end }}
   serversTransports:
     insecure-backend:
       insecureSkipVerify: true
   middlewares:
+    trusted-only:
+      ipAllowList:
+        sourceRange: {{ env "TRUSTED_CIDRS" | splitList "," | toJson }}
     https-redirect:
       redirectScheme:
         scheme: https
         permanent: true
-    trusted-only:
-      ipAllowList:
-        sourceRange: {{ env "TRUSTED_CIDRS" | splitList "," | toJson }}
 tcp:
   routers:
     apple-relay:
-      entryPoints:
-      - apple-relay
+      entryPoints: [apple-relay]
       rule: {{ printf "HostSNI(`%s`)" (env "APPLE_RELAY_HOST") | toJson }}
       service: apple-relay
       tls:
         options: apple-relay-http2
-    fallback-zoraxy:
-      entryPoints:
-      - websecure
-      rule: {{ printf "!HostSNIRegexp(`^(.+\\.)?%s$`)" (regexQuoteMeta (env "DOMAIN")) | toJson }}
-      priority: 1
-      service: fallback-zoraxy
-      tls:
-        passthrough: true
   services:
     apple-relay:
       loadBalancer:
         servers:
         - address: {{ env "APPLE_RELAY_BACKEND" | toJson }}
-    fallback-zoraxy:
-      loadBalancer:
-        servers:
-        - address: {{ env "ZORAXY_TLS_BACKEND" | toJson }}
 tls:
   options:
     apple-relay-http2:
       minVersion: VersionTLS12
-      alpnProtocols:
-      - h2
+      alpnProtocols: [h2]
