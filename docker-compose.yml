@@ -1,103 +1,137 @@
-# Raspberry Pi deployment. All operator credentials are read from .env.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
 services:
   traefik:
-    image: traefik:latest
-    container_name: traefik
+    image: ${TRAEFIK_IMAGE:-traefik:v3.7.15}
+    container_name: ${TRAEFIK_CONTAINER_NAME:-traefik}
     restart: unless-stopped
-    env_file:
-    - .env
+    env_file: [.env]
+    # Use one static configuration method: CLI flags, interpolated by Compose.
+    command:
+      - --api.dashboard=true
+      - --ping=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.asdefault=true
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.asdefault=true
+      - --entrypoints.apple-relay.address=:8443
+      - --entrypoints.metrics.address=:8082
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=${TRAEFIK_NETWORK:-proxy}
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?Run ./manage setup}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.caserver=${ACME_CA_SERVER:-https://acme-v02.api.letsencrypt.org/directory}
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=${ACME_DNS_PROVIDER:-selectelv2}
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.resolvers=${ACME_DNS_RESOLVERS:-1.1.1.1:53,8.8.8.8:53}
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.propagation.delaybeforechecks=${ACME_DNS_DELAY:-20s}
+      - --metrics.prometheus.entrypoint=metrics
+      - --metrics.prometheus.addrouterslabels=true
+      - --metrics.prometheus.addserviceslabels=true
+      - --log.level=${TRAEFIK_LOG_LEVEL:-INFO}
+      - --log.format=json
+      - --accesslog.format=json
+      - --accesslog.fields.headers.defaultmode=drop
     ports:
-    - 80:80
-    - 443:443
-    - 8443:8443/tcp
+      - ${LISTEN_ADDRESS:-0.0.0.0}:${HTTP_PORT:-80}:80/tcp
+      - ${LISTEN_ADDRESS:-0.0.0.0}:${HTTPS_PORT:-443}:443/tcp
+      - ${LISTEN_ADDRESS:-0.0.0.0}:${APPLE_RELAY_PORT:-8443}:8443/tcp
     volumes:
-    - /var/run/docker.sock:/var/run/docker.sock:ro
-    - ./traefik.yml:/etc/traefik/traefik.yml:ro
-    - ./dynamic:/etc/traefik/dynamic:ro
-    - ./letsencrypt:/letsencrypt
-    - ./certs:/certs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./dynamic:/etc/traefik/dynamic:ro
+      - ${ACME_STORAGE_DIR:-./letsencrypt}:/letsencrypt
+      - ${CERTIFICATES_DIR:-./certs}:/certs:ro
     extra_hosts:
-    - host.docker.internal:host-gateway
-    - openwrt:171.134.51.1
-    networks:
-    - proxy
+      - host.docker.internal:host-gateway
+      - ${BACKEND_HOST_ALIAS:-legacy-gateway}:${BACKEND_HOST_ADDRESS:-127.0.0.1}
+    networks: [proxy]
+    healthcheck:
+      test: [CMD, traefik, healthcheck, --ping]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *logging
     labels:
-    - traefik.enable=true
-    - traefik.http.routers.dashboard.rule=Host(`dashboard.${DOMAIN}`)
-    - traefik.http.routers.dashboard.entrypoints=websecure
-    - traefik.http.routers.dashboard.service=api@internal
-    - traefik.http.routers.dashboard.tls=true
-    - traefik.http.routers.dashboard.tls.certresolver=letsencrypt
-    - traefik.http.routers.dashboard.tls.domains[0].main=${DOMAIN}
-    - traefik.http.routers.dashboard.tls.domains[0].sans=*.${DOMAIN}
-    - traefik.http.routers.dashboard.middlewares=dashboard-auth
-    - traefik.http.middlewares.dashboard-auth.basicauth.users=${DASHBOARD_AUTH}
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
+      - traefik.enable=true
+      - traefik.http.routers.dashboard.rule=Host(`dashboard.${DOMAIN:?Run ./manage setup}`)
+      - traefik.http.routers.dashboard.entrypoints=websecure
+      - traefik.http.routers.dashboard.service=api@internal
+      - traefik.http.routers.dashboard.tls=true
+      - traefik.http.routers.dashboard.tls.certresolver=letsencrypt
+      - traefik.http.routers.dashboard.tls.domains[0].main=${DOMAIN}
+      - traefik.http.routers.dashboard.tls.domains[0].sans=*.${DOMAIN}
+      - traefik.http.routers.dashboard.middlewares=dashboard-auth
+      - traefik.http.middlewares.dashboard-auth.basicauth.users=${DASHBOARD_AUTH:?Run ./manage setup}
+
+  # Scrape/forward Traefik metrics only. No local Prometheus query server.
+  metrics-agent:
+    image: ${METRICS_AGENT_IMAGE:-prom/prometheus:v3.13.3}
+    profiles: [metrics]
     restart: unless-stopped
-    extra_hosts:
-    - host.docker.internal:host-gateway
+    user: ${LOCAL_UID:-1000}:${LOCAL_GID:-1000}
+    command:
+      - --agent
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.agent.path=/prometheus
+      - --web.listen-address=127.0.0.1:9095
     volumes:
-    - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    - ./kuma_api_key:/etc/prometheus/kuma_api_key:ro
-    - prometheus-data:/prometheus
-    networks:
-    - proxy
+      - ./.runtime:/etc/prometheus:ro
+      - ./state/metrics-agent:/prometheus
+    networks: [proxy]
+    depends_on: [traefik]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    logging: *logging
+
   grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
+    image: ${GRAFANA_IMAGE:-grafana/grafana:latest}
+    container_name: ${GRAFANA_CONTAINER_NAME:-grafana}
     restart: unless-stopped
     environment:
-    - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
-    - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
-    - GF_SERVER_ROOT_URL=https://grafana.dgkagramanyan.ru
-    - GF_PUBLIC_DASHBOARDS_ENABLED=publicDashboards
-    - GF_CACHING_ENABLED=false
-    volumes:
-    - grafana-data:/var/lib/grafana
-    networks:
-    - proxy
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Run ./manage setup}
+      GF_FEATURE_TOGGLES_ENABLE: publicDashboards
+      GF_SERVER_ROOT_URL: https://grafana.${DOMAIN}
+      GF_PUBLIC_DASHBOARDS_ENABLED: publicDashboards
+      GF_CACHING_ENABLED: "false"
+    volumes: [grafana-data:/var/lib/grafana]
+    networks: [proxy]
+    logging: *logging
+
   profile-signer:
     image: openvpn-profile-signer:local
     build:
       context: ${PROFILE_SIGNER_SOURCE:-https://github.com/dkagramanyan/openvpn-server.git#562790a32953c91fb88799e673002c72fafdd994}
       dockerfile: signer/Dockerfile
+    profiles: [profile-signing]
     restart: unless-stopped
     environment:
       PROFILE_SIGNER_TOKEN: ${RELAY_PROFILE_SIGNING_TOKEN:-}
-      PROFILE_SIGNER_HOSTNAME: dgkagramanyan.ru
-      PROFILE_SIGNER_RELAY_URL: https://dgkagramanyan.ru:8443
-    volumes:
-    - ./letsencrypt:/letsencrypt:ro
-    networks:
-    - proxy
-    cap_drop:
-    - ALL
-    security_opt:
-    - no-new-privileges:true
+      PROFILE_SIGNER_HOSTNAME: ${APPLE_RELAY_HOST:-${DOMAIN}}
+      PROFILE_SIGNER_RELAY_URL: ${APPLE_RELAY_URL:-https://${DOMAIN}:8443}
+    volumes: ["${ACME_STORAGE_DIR:-./letsencrypt}:/letsencrypt:ro"]
+    networks: [proxy]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     read_only: true
-    tmpfs:
-    - /tmp
-    logging:
-      driver: json-file
-      options:
-        max-size: 5m
-        max-file: '2'
+    tmpfs: [/tmp]
+    logging: *logging
     labels:
-    - traefik.enable=true
-    - traefik.http.routers.relay-profile-signer.rule=Host(`openvpn.dgkagramanyan.ru`) && Path(`/internal/relay-sign`)
-    - traefik.http.routers.relay-profile-signer.entrypoints=websecure
-    - traefik.http.routers.relay-profile-signer.priority=1000
-    - traefik.http.routers.relay-profile-signer.tls=true
-    - traefik.http.routers.relay-profile-signer.middlewares=relay-signer-source
-    - traefik.http.middlewares.relay-signer-source.ipallowlist.sourcerange=170.134.51.30/32
-    - traefik.http.services.relay-profile-signer.loadbalancer.server.port=8085
-    profiles:
-    - profile-signing
+      - traefik.enable=true
+      - traefik.http.routers.relay-profile-signer.rule=Host(`${OPENVPN_HOST}`) && Path(`/internal/relay-sign`)
+      - traefik.http.routers.relay-profile-signer.entrypoints=websecure
+      - traefik.http.routers.relay-profile-signer.priority=1000
+      - traefik.http.routers.relay-profile-signer.tls=true
+      - traefik.http.routers.relay-profile-signer.middlewares=relay-signer-source
+      - traefik.http.middlewares.relay-signer-source.ipallowlist.sourcerange=${SIGNER_SOURCE_CIDRS:-127.0.0.1/32}
+      - traefik.http.services.relay-profile-signer.loadbalancer.server.port=8085
+
 networks:
   proxy:
-    name: proxy
+    name: ${TRAEFIK_NETWORK:-proxy}
 volumes:
-  prometheus-data: null
-  grafana-data: null
+  grafana-data:

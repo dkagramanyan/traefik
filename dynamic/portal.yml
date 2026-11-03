@@ -1,8 +1,8 @@
-# Public client-only download portal. Management routes keep trusted-only.
+# Public client-only downloads; administrative APIs retain trusted-only.
 http:
   routers:
     user-portal:
-      rule: "Host(`openvpn.dgkagramanyan.ru`) && (Path(`/portal`) || Path(`/api/portal`) || PathPrefix(`/api/portal/`) || PathPrefix(`/static/`))"
+      rule: {{ printf "Host(`%s`) && (Path(`/portal`) || Path(`/api/portal`) || PathPrefix(`/api/portal/`) || PathPrefix(`/static/`))" (env "OPENVPN_HOST") | toJson }}
       priority: 200
       entryPoints: [websecure]
       service: openvpn

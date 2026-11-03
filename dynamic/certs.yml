@@ -1,6 +1,4 @@
+# Local certificate paths; existing paths are imported by setup.
+# These externally supplied certificates retain their own renewal process.
 tls:
-  certificates:
-    - certFile: /certs/wiki.aripari.am.crt
-      keyFile: /certs/wiki.aripari.am.key
-    - certFile: /certs/cloud.armclub.tech.crt
-      keyFile: /certs/cloud.armclub.tech.key
+  certificates: {{ env "EXTRA_TLS_CERTIFICATES" | default "[]" | fromJson | toJson }}

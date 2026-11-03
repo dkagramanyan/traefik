@@ -18,3 +18,7 @@ migration-backups/
 __pycache__/
 .pytest_cache/
 .venv/
+.runtime/
+state/
+traefik.yml
+prometheus.yml

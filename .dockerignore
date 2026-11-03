@@ -1,8 +1,10 @@
 .git
 .env
 .env.*
+.venv/
+.runtime/
+state/
 letsencrypt/
 certs/
 kuma_api_key
-prometheus.yml
 migration-backups/
