@@ -30,7 +30,7 @@ are never printed. Setup does not contact your DNS provider or start containers.
 Start the services using the Docker permissions configured on your server:
 
 ```sh
-sudo docker compose config --quiet
+sudo docker compose config --quiet &&
 sudo docker compose up -d --build
 ```
 
@@ -45,10 +45,10 @@ or VPN; setup does not create the network connection to another location.
 Use this path if your current folder is not a Git checkout:
 
 ```sh
-git clone https://github.com/dkagramanyan/traefik.git ~/traefik-config
-~/traefik-config/manage adopt ~/traefik
-cd ~/traefik
-sudo docker compose config --quiet
+git clone https://github.com/dkagramanyan/traefik.git ~/traefik-config &&
+~/traefik-config/manage adopt --fix-permissions ~/traefik &&
+cd ~/traefik &&
+sudo docker compose config --quiet &&
 sudo docker compose up -d --build --remove-orphans
 ```
 
@@ -58,6 +58,22 @@ hostname mapping into `.env`. It keeps the Docker project name and existing
 Grafana volume, ACME store, certificates and other local credentials. It backs
 up replaced configuration in ignored `migration-backups/` with private
 permissions, then adds Git metadata. It never restarts containers.
+
+Permission checks run before backups or configuration copies. If old configuration
+files are restricted, `--fix-permissions` invokes sudo to give the calling user
+access to configuration files and directories. Certificate stores, private-key
+files, service data and existing backup contents retain their ownership. The
+migration itself runs as your normal user. The `&&` chain stops if any step fails.
+
+If an earlier attempt stopped with `Permission denied`, use the existing clone:
+
+```sh
+git -C ~/traefik-config pull --ff-only &&
+~/traefik-config/manage adopt --fix-permissions ~/traefik &&
+cd ~/traefik &&
+sudo docker compose config --quiet &&
+sudo docker compose up -d --build --remove-orphans
+```
 
 `--remove-orphans` removes the previous Prometheus container. Its old data volume
 is retained. Do not run `docker compose down -v` during migration. The previous
@@ -107,6 +123,9 @@ Unknown existing provider variables are preserved and passed through to Traefik.
 Setup cannot obtain DNS API credentials from a provider or recover passwords
 from hashes. If a dashboard hash exists, its login is kept. To generate a new
 hash, set the desired username/password and clear `DASHBOARD_AUTH` before setup.
+Legacy bcrypt hashes with doubled `$$` escapes are imported without changing
+the password. Setup writes the canonical hash in single quotes; do not double
+its dollar signs again. See [Compose dotenv quoting](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/#env-file-syntax).
 Grafana keeps its current password in its existing database; its initialization
 variable does not reset that database password.
 
@@ -234,4 +253,6 @@ The Docker test uses fake domains, temporary certificates and isolated container
 it makes no production ACME requests. It exercises real environment rendering,
 all routes, public/private access, relay TLS termination with h2 ALPN, and actual
 agent forwarding to a temporary remote-write receiver. Temporary containers and
-networks are removed afterwards. CI also builds the pinned profile signer.
+networks are removed afterwards. Migration tests reproduce root-owned configuration
+files, check scoped permission repair, and verify legacy bcrypt logins. CI also
+builds the pinned profile signer.

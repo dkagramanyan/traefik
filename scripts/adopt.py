@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Adopt an existing server without moving its keys, ACME store or Docker data."""
 import argparse
+import json
+import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 import shutil
@@ -15,15 +18,66 @@ def git(root, *args):
     return subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True).stdout
 
 
-def adopt(source, destination):
+def permission_issues(destination, files):
+    """Check paths needed for copies, backups and private runtime output."""
+    issues = set()
+    def check(path, mask, owner=False):
+        if path.is_symlink():
+            raise ValueError("Migration does not replace linked configuration paths: " + str(path))
+        if not os.access(path, mask) or (owner and path.stat().st_uid != os.getuid()):
+            issues.add(path)
+    paths = [destination, destination / "dynamic", destination / "migration-backups", destination / ".runtime"]
+    paths += [destination / name for name in dict.fromkeys([*files, ".env", "traefik.yml", "prometheus.yml"])]
+    for path in paths:
+        for parent in path.parents:
+            if parent == destination or destination in parent.parents:
+                if parent.exists(): check(parent, os.R_OK | os.W_OK | os.X_OK)
+            else: break
+        if path.exists():
+            if path.is_dir():
+                check(path, os.R_OK | os.W_OK | os.X_OK, path.name in ("migration-backups", ".runtime"))
+            else:
+                check(path, os.R_OK | os.W_OK)
+    for name in ("dynamic", ".runtime"):
+        folder = destination / name
+        if folder.is_dir():
+            def inaccessible(error): issues.add(Path(error.filename))
+            for parent, directories, children in os.walk(folder, onerror=inaccessible, followlinks=False):
+                check(Path(parent), os.R_OK | os.W_OK | os.X_OK)
+                for child in directories + children:
+                    path = Path(parent) / child
+                    check(path, os.R_OK | os.W_OK | (os.X_OK if path.is_dir() else 0), name == ".runtime")
+    return sorted(issues)
+
+
+def ensure_permissions(destination, files, fix_permissions=False):
+    issues = permission_issues(destination, files)
+    if issues and fix_permissions:
+        # The explicit flag authorizes a narrow sudo operation, not a root migration.
+        paths = sorted(set([*files, ".env", "traefik.yml", "prometheus.yml", "dynamic", ".runtime", "migration-backups"]))
+        payload = {"root": str(destination), "paths": paths, "uid": os.getuid(), "gid": os.getgid()}
+        subprocess.run(["sudo", sys.executable, str(ROOT / "scripts/fix_permissions.py")],
+                       input=json.dumps(payload), text=True, check=True)
+        issues = permission_issues(destination, files)
+    if issues:
+        names = ", ".join(str(path.relative_to(destination)) or "." for path in issues[:8])
+        raise ValueError("Configuration permissions need repair: " + names +
+                         ". Retry manage adopt --fix-permissions with the same destination; "
+                         "it uses sudo for configuration files only. No migration files were changed.")
+
+
+def adopt(source, destination, fix_permissions=False):
     source, destination = Path(source).resolve(), Path(destination).resolve()
     if not (source / ".git").is_dir():
         raise ValueError("Run this helper from a normal clone of the Traefik repository")
     if source == destination or not destination.is_dir() or (destination / ".git").exists():
         raise ValueError("Destination must be an existing deployment without Git metadata; an existing checkout should use git pull, then ./manage setup")
+    if destination == Path(destination.anchor) or not (destination / "docker-compose.yml").is_file():
+        raise ValueError("Destination must be a deployment folder containing docker-compose.yml")
     files = [p for p in git(source, "ls-files", "-z").decode().split("\0") if p and (source / p).is_file()]
     if "docker-compose.yml" not in files:
         raise ValueError("Source does not contain the deployment files")
+    ensure_permissions(destination, files, fix_permissions)
     # Resolve/import all settings before changing the destination.
     values = prepare(source, import_from=destination, use_local_env=False)
     previous = (destination / ".env").read_text() if (destination / ".env").exists() else ""
@@ -73,14 +127,15 @@ def adopt(source, destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path, help="Existing deployment, normally ~/traefik")
+    parser.add_argument("--fix-permissions", action="store_true", help="Use sudo to repair configuration access for the invoking user before migration")
     args = parser.parse_args()
     try:
-        backup = adopt(ROOT, args.directory)
+        backup = adopt(ROOT, args.directory, fix_permissions=args.fix_permissions)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         parser.exit(1, f"Migration stopped: {exc}\n")
     print(f"Prepared {args.directory}; private backup: {backup}")
     print("Kept local certificates, ACME state and Docker volumes. Containers were not restarted.")
-    print("Next: cd into that directory and run ./manage up --remove-orphans.")
+    print("Next: cd into that directory, run sudo docker compose config --quiet, then sudo docker compose up -d --build --remove-orphans.")
 
 
 if __name__ == "__main__":

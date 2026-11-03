@@ -38,9 +38,10 @@ def read_env(path):
             else:
                 value = re.split(r"\s+#", value, maxsplit=1)[0].rstrip()
             def expand(match):
+                if match.group(0) == "$$": return "$"
                 name, fallback, plain = match.groups()
                 return result.get(name or plain, os.environ.get(name or plain, fallback or ""))
-            value = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)", expand, value)
+            value = re.sub(r"\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)", expand, value)
         result[key] = value
     return result
 
@@ -186,6 +187,16 @@ def prepare(root=ROOT, import_from=None, domain=None, email=None, hasher=passwor
                 raise ValueError(f"{key} must be an HTTP(S) URL")
     if values.get("METRICS_BEARER_TOKEN") and (values.get("METRICS_USERNAME") or values.get("METRICS_PASSWORD")):
         raise ValueError("Use either METRICS_BEARER_TOKEN or METRICS_USERNAME/PASSWORD")
+    # Historical instructions doubled bcrypt dollar signs for Compose. Some
+    # deployments also quoted that escaped value. Canonicalize recognized hashes.
+    auth_entries = []
+    for entry in values.get("DASHBOARD_AUTH", "").split(","):
+        username, separator, digest = entry.partition(":")
+        canonical = digest.replace("$$", "$")
+        if separator and re.fullmatch(r"\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}", canonical):
+            entry = username + ":" + canonical
+        auth_entries.append(entry)
+    values["DASHBOARD_AUTH"] = ",".join(auth_entries)
     if values.get("DASHBOARD_AUTH") and not (current.get("DASHBOARD_USERNAME") or imported.get("DASHBOARD_USERNAME")):
         values["DASHBOARD_USERNAME"] = values["DASHBOARD_AUTH"].split(":", 1)[0]
     if not values.get("DASHBOARD_AUTH"):

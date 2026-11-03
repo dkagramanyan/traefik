@@ -194,3 +194,138 @@ def test_upgrade_imports_previous_git_config_after_templates_replace_it(tmp_path
     assert values["GRAFANA_ADMIN_PASSWORD"] == "old-local-test-password"
     output = capsys.readouterr().out
     assert "preserve-this-provider-secret" not in output and "old-local-test-password" not in output
+
+
+def test_preflight_stops_before_backup_or_copy_on_restricted_configuration(tmp_path):
+    source = source_repo(tmp_path / "source")
+    target = deployment(tmp_path / "target")
+    restricted = target / ".env.example"
+    restricted.write_text("old-example")
+    restricted.chmod(0)
+    before = (target / "docker-compose.yml").read_bytes()
+    environment = (target / ".env").read_bytes()
+    try:
+        with pytest.raises(ValueError, match="--fix-permissions"):
+            adopt.adopt(source, target)
+        assert (target / "docker-compose.yml").read_bytes() == before
+        assert (target / ".env").read_bytes() == environment
+        assert not (target / "migration-backups").exists()
+        assert not (target / ".git").exists()
+    finally:
+        restricted.chmod(0o600)
+
+
+@pytest.mark.parametrize("quote", ["", "'", '"'])
+def test_import_legacy_doubled_bcrypt_preserves_the_original_login(tmp_path, quote):
+    import bcrypt
+    root = fresh(tmp_path / "target")
+    digest = bcrypt.hashpw(b"test-existing-password", bcrypt.gensalt(rounds=5)).decode()
+    escaped = ("admin:" + digest).replace("$", "$$")
+    (root / ".env").write_text("DOMAIN=example.test\nDASHBOARD_AUTH=" + quote + escaped + quote + "\nPROVIDER_PASSWORD='fake-#-punctuation['\n")
+    values = settings.prepare(root)
+    assert values["DASHBOARD_AUTH"] == "admin:" + digest
+    assert values["PROVIDER_PASSWORD"] == "fake-#-punctuation["
+    settings.materialize(root, values)
+    imported = settings.read_env(root / ".env")["DASHBOARD_AUTH"]
+    assert bcrypt.checkpw(b"test-existing-password", imported.split(":", 1)[1].encode())
+    assert "DASHBOARD_AUTH='admin:$2" in (root / ".env").read_text()
+
+
+def test_dotenv_escaped_dollars_do_not_expand_the_following_variable(tmp_path):
+    path = tmp_path / ".env"
+    path.write_text("BASE=expanded\nLITERAL=$${BASE}\nNORMAL=${BASE}\n")
+    values = settings.read_env(path)
+    assert values["LITERAL"] == "${BASE}"
+    assert values["NORMAL"] == "expanded"
+
+
+def test_permission_repair_excludes_keys_stores_and_backup_contents(tmp_path):
+    import fix_permissions
+    import os
+    root = tmp_path / "deployment"
+    root.mkdir()
+    (root / "dynamic").mkdir()
+    config = root / "dynamic/extra.yml"
+    config.write_text("http: {}\n")
+    config.chmod(0o400)
+    protected = []
+    for name in ("letsencrypt/acme.json", "certs/server.key", "state/wal", "migration-backups/old/.env", "dynamic/server.key"):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("private-local-state")
+        path.chmod(0o400)
+        protected.append((path, path.stat()))
+    fix_permissions.repair(root, ["dynamic", "migration-backups"], os.getuid(), os.getgid())
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+    for path, before in protected:
+        assert (path.stat().st_uid, path.stat().st_gid, path.stat().st_mode) == (before.st_uid, before.st_gid, before.st_mode)
+        assert path.read_text() == "private-local-state"
+
+
+def test_permission_repair_rejects_key_store_paths_and_symlinks_before_changes(tmp_path):
+    import fix_permissions
+    import os
+    root = tmp_path / "deployment"
+    root.mkdir()
+    path = root / ".env.example"
+    path.write_text("placeholder")
+    path.chmod(0o400)
+    with pytest.raises(ValueError, match="excludes"):
+        fix_permissions.repair(root, [".env.example", "letsencrypt/acme.json"], os.getuid(), os.getgid())
+    assert stat.S_IMODE(path.stat().st_mode) == 0o400
+    (root / "dynamic").symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(ValueError, match="linked"):
+        fix_permissions.repair(root, [".env.example", "dynamic"], os.getuid(), os.getgid())
+    assert stat.S_IMODE(path.stat().st_mode) == 0o400
+
+
+def test_adoption_repairs_root_owned_configuration_using_scoped_helper(tmp_path, monkeypatch):
+    import bcrypt
+    import os
+    source = source_repo(tmp_path / "source")
+    target = deployment(tmp_path / "target")
+    (target / ".env.example").write_text("restricted-old-example")
+    digest = bcrypt.hashpw(b"test-existing-password", bcrypt.gensalt(rounds=5)).decode()
+    (target / ".env").write_text("DOMAIN=example.test\nDASHBOARD_AUTH=" + ("admin:" + digest).replace("$", "$$") + "\nPROVIDER_PASSWORD='fake-#-punctuation['\n")
+    image = os.environ.get("PYTHON_TEST_IMAGE", "python:3.14-alpine3.24")
+    subprocess.run(["docker", "run", "--rm", "-v", f"{tmp_path}:{tmp_path}", image,
+                    "python", "-c", '''import os,pathlib,sys
+root=pathlib.Path(sys.argv[1])
+for name in (".env.example","docker-compose.yml","dynamic/native-services.yml","letsencrypt/acme.json","certs/extra.key"):
+ p=root/name; os.chown(p,0,0); p.chmod(0o600)
+''', str(target)], check=True, capture_output=True)
+    stores = [target / name for name in ("letsencrypt/acme.json", "certs/extra.key")]
+    before = [(p.stat().st_uid, p.stat().st_gid, p.stat().st_mode, p.stat().st_size) for p in stores]
+    environment = (target / ".env").read_bytes()
+    try:
+        with pytest.raises(ValueError, match="--fix-permissions"):
+            adopt.adopt(source, target)
+        assert not (target / "migration-backups").exists()
+        assert environment == (target / ".env").read_bytes()
+        original_run = subprocess.run
+        invoked = []
+        def docker_sudo(args, *rest, **kwargs):
+            if args[0] == "sudo":
+                invoked.append(json.loads(kwargs["input"]))
+                args = ["docker", "run", "--rm", "-i", "-v", f"{ROOT}:/code:ro", "-v", f"{tmp_path}:{tmp_path}",
+                        image, "python", "/code/scripts/fix_permissions.py"]
+            return original_run(args, *rest, **kwargs)
+        monkeypatch.setattr(subprocess, "run", docker_sudo)
+        adopt.adopt(source, target, fix_permissions=True)
+        assert len(invoked) == 1
+        assert invoked[0]["uid"] == os.getuid()
+        assert "letsencrypt/acme.json" not in invoked[0]["paths"]
+        assert "certs/extra.key" not in invoked[0]["paths"]
+        values = settings.read_env(target / ".env")
+        assert bcrypt.checkpw(b"test-existing-password", values["DASHBOARD_AUTH"].split(":", 1)[1].encode())
+        assert values["PROVIDER_PASSWORD"] == "fake-#-punctuation["
+        assert (target / ".env.example").stat().st_uid == os.getuid()
+        assert before == [(p.stat().st_uid, p.stat().st_gid, p.stat().st_mode, p.stat().st_size) for p in stores]
+    finally:
+        # Restore only synthetic fixture ownership for pytest's temporary cleanup.
+        subprocess.run(["docker", "run", "--rm", "-v", f"{tmp_path}:{tmp_path}", image,
+                        "python", "-c", '''import os,pathlib,sys
+root=pathlib.Path(sys.argv[1]); uid=int(sys.argv[2]); gid=int(sys.argv[3])
+for parent,dirs,files in os.walk(root):
+ for name in dirs+files: os.chown(pathlib.Path(parent)/name,uid,gid)
+''', str(tmp_path), str(os.getuid()), str(os.getgid())], check=True, capture_output=True)
