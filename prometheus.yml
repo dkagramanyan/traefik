@@ -1,0 +1,36 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+scrape_configs:
+  - job_name: traefik
+    static_configs:
+      - targets: ["traefik:8082"]
+  - job_name: wiki-host
+    static_configs:
+      - targets: ["170.134.51.33:9100"]
+        labels:
+          instance: wiki
+  - job_name: uptime-kuma
+    scrape_interval: 60s
+    scheme: http
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:3001"]
+    basic_auth:
+      username: ""
+      password_file: /etc/prometheus/kuma_api_key
+  - job_name: homepc-node
+    static_configs:
+      - targets: ["170.134.51.29:9100"]
+        labels:
+          instance: homepc
+  - job_name: homepc-smartctl
+    static_configs:
+      - targets: ["170.134.51.29:9633"]
+        labels:
+          instance: homepc
+  - job_name: homepc-gpu
+    static_configs:
+      - targets: ["170.134.51.29:9835"]
+        labels:
+          instance: homepc

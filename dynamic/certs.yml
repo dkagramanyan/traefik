@@ -1,0 +1,6 @@
+tls:
+  certificates:
+    - certFile: /certs/wiki.aripari.am.crt
+      keyFile: /certs/wiki.aripari.am.key
+    - certFile: /certs/cloud.armclub.tech.crt
+      keyFile: /certs/cloud.armclub.tech.key

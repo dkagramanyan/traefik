@@ -1,0 +1,9 @@
+# Public client-only download portal. Management routes keep trusted-only.
+http:
+  routers:
+    user-portal:
+      rule: "Host(`openvpn.dgkagramanyan.ru`) && (Path(`/portal`) || Path(`/api/portal`) || PathPrefix(`/api/portal/`) || PathPrefix(`/static/`))"
+      priority: 200
+      entryPoints: [websecure]
+      service: openvpn
+      tls: {}

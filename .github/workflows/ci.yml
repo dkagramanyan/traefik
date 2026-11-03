@@ -1,0 +1,19 @@
+name: Validate deployment
+on:
+  push:
+  pull_request:
+jobs:
+  configuration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - run: pip install -r requirements-dev.txt
+      - run: python scripts/validate.py
+      - run: python -m pytest tests -q
+      - run: python scripts/test_traefik.py
+      - name: Build the pinned profile signer
+        run: |
+          docker build -t profile-signer:ci -f signer/Dockerfile https://github.com/dkagramanyan/openvpn-server.git#562790a32953c91fb88799e673002c72fafdd994
