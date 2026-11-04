@@ -52,6 +52,18 @@ def test_portal_listener_can_be_deployed_before_guest_access_is_enabled(tmp_path
     assert values["PORTAL_HTTPS_PORT"] == "9443"
 
 
+def test_guest_allowlist_export_needs_no_extra_listener(tmp_path):
+    data = export()
+    data["portal"].update(enabled=True, target="", destinations=[])
+    data["gateway"]["portal_cidrs"] = ["192.0.2.0/24", "10.8.0.128/25"]
+    path = tmp_path / "network.private.json"
+    path.write_text(json.dumps(data))
+    values = network_settings.from_file(path)
+    assert values["PORTAL_CIDRS"] == "192.0.2.0/24,10.8.0.128/25"
+    assert values["TRUSTED_CIDRS"] == "192.0.2.0/24"
+    assert values["PORTAL_LISTEN_ADDRESS"] == "127.0.0.1"
+
+
 def test_optional_service_inventory_is_preserved_until_explicit_replacement(tmp_path):
     root = fresh(tmp_path / "gateway")
     old = prepared(root)

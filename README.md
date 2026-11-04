@@ -194,6 +194,17 @@ does not change the gateway's existing listener ports or router port forwards.
 
 ### Private portal for LAN, OpenVPN guests and Apple Relay guests
 
+For guests that already reach this gateway, use the normal HTTPS portal route
+with a portal-only source allowlist. Enabling guest portal access in the UI adds
+the guest subnet to `PORTAL_CIDRS`, without adding it to `TRUSTED_CIDRS`.
+Allow the source address Traefik actually receives: either guest IPs or the
+VPN/relay server's egress IP after NAT. Portal users still authenticate to download
+their own profiles. This mode requires no dedicated listener configuration.
+
+The dedicated listener below is an optional advanced route for networks whose
+guest LAN blocks prevent that normal path; the allowlist does not change those
+blocks or your existing port forwarding.
+
 Enter the portal hostname, dedicated LAN listener address/port, and every IPv4
 address its DNS can return. Use a dedicated port such as 9443, not the gateway's
 normal HTTPS port or the application's direct backend port. Enter the portal's

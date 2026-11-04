@@ -76,7 +76,7 @@ def from_file(path):
         elif imported_services:
             raise ValueError("Enable service replacement to import an additional service inventory")
         values["PORTAL_LISTEN_ADDRESS"], values["PORTAL_HTTPS_PORT"] = "127.0.0.1", "9443"
-        if portal["enabled"] or portal.get("target"):
+        if portal.get("target"):
             if portal["host"] != values["OPENVPN_HOST"]: raise ValueError("Portal and OpenVPN hosts must match")
             address, port = portal["target"].rsplit(":", 1)
             ip = ipaddress.IPv4Address(address)
