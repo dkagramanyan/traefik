@@ -137,14 +137,28 @@ socketserver.TCPServer(("0.0.0.0",8444),Echo).serve_forever()
             def get(url, headers=None):
                 with opener.open(Request(url, headers=headers or {}), timeout=3) as response:
                     return response.read()
+            expected_routes = {
+                name + "@file" for name in (
+                    "openvpn", "https-redirect", "custom-private", "custom-public",
+                    "user-portal", "guest-website", "dashboard-test", "apple-relay",
+                )
+            }
+            observed_routes = {}
             def routes():
                 http = json.loads(get(f"http://127.0.0.1:{api_port}/api/http/routers"))
                 tcp = json.loads(get(f"http://127.0.0.1:{api_port}/api/tcp/routers"))
                 found = {r["name"]: r for r in http + tcp if r["name"].endswith("@file")}
-                return found if len(found) == 7 and all(r["status"] == "enabled" for r in found.values()) else None
-            loaded = eventually(routes, "enabled core and synthetic service routes")
+                observed_routes.clear()
+                observed_routes.update({name: route["status"] for name, route in found.items()})
+                return found if set(found) == expected_routes and all(r["status"] == "enabled" for r in found.values()) else None
+            try:
+                loaded = eventually(routes, "enabled core and synthetic service routes")
+            except RuntimeError as exc:
+                raise RuntimeError(f"{exc}; expected {sorted(expected_routes)}; observed {observed_routes}") from exc
             for name in ("openvpn", "custom-private"):
                 assert "trusted-only@file" in loaded[name + "@file"]["middlewares"]
+            assert loaded["guest-website@file"]["entryPoints"] == ["portal"]
+            assert "portal-boundary@file" in loaded["guest-website@file"]["middlewares"]
             # Unlisted sources cannot reach the portal or management APIs.
             proxy_ip = run("docker", "inspect", proxy, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
             client = start("client", python_image, "sleep", "120", options=("--add-host", "openvpn.example.test:" + proxy_ip, "--add-host", "dashboard.example.test:" + proxy_ip))
