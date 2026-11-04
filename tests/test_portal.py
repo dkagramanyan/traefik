@@ -12,6 +12,7 @@ import time
 import pytest
 
 from test_configuration import ROOT, fresh, prepared
+import network_settings
 
 
 def test_portal_settings(tmp_path):
@@ -62,6 +63,7 @@ def test_guest_portal_routes(tmp_path, server_listed):
         {"name": "extra", "host": "app.example.test", "url": values["BACKEND_OPENVPN"], "public": False, "paths": []},
         {"name": "status", "host": "status.example.test", "url": values["BACKEND_OPENVPN"], "public": True, "paths": ["/health", "/public/"]},
     ])
+    values["GUEST_LINK_ROUTES_JSON"] = json.dumps(network_settings.link_routes([{"host": "app.example.test", "path": "/share/abc"}], values))
     dynamic = root / "dynamic"
     dynamic.mkdir()
     for name in ("native-services.yml", "portal.yml"):
@@ -112,7 +114,10 @@ def test_guest_portal_routes(tmp_path, server_listed):
             for path in ("/", "/api/clients", "/internal/relay-sign", "/portal-admin", "/api/portal-admin"):
                 assert request("portal", portal_source, path) == (303 if path == "/" else 404)
             assert request("portal", portal_source, "/portal", "grafana.example.test") == 404
-            assert request("portal", portal_source, "/", "app.example.test") == 404
+            # A guest link opens its own path (and below) on the portal listener, nothing else of that site.
+            for path, status in (("/share/abc", 200), ("/share/abc/file.txt", 200), ("/share/abcdef", 404), ("/", 404), ("/admin", 404)):
+                assert request("portal", portal_source, path, "app.example.test") == status
+            assert request("portal", "127.0.0.4", "/share/abc", "app.example.test") == 403
             assert request("websecure", "127.0.0.2", "/api/clients") == 200
             assert request("websecure", "127.0.0.2", "/", "app.example.test") == 200
             assert request("websecure", "127.0.0.4", "/", "app.example.test") == 403

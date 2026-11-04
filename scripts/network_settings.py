@@ -66,6 +66,50 @@ def services(items, reserved):
     return result
 
 
+def guest_links(items, domain, reserved):
+    """[{"host", "path"}]: pages under the domain that guests may open through the portal listener."""
+    if not isinstance(items, list) or len(items) > 50:
+        raise ValueError("Expected a list of at most 50 guest links")
+    result = []
+    for item in items:
+        name, path = host(item["host"]), item["path"]
+        if not name.endswith("." + domain) or name in reserved:
+            raise ValueError(f"Guest link host {name} must be a website under {domain}")
+        if not isinstance(path, str) or not path.startswith("/") or UNSAFE.search(path) or "?" in path or "#" in path:
+            raise ValueError(f"Invalid guest link path {path!r}")
+        result.append({"host": name, "path": path})
+    return result
+
+
+def link_routes(links, values):
+    """Routers for the guest links on the portal listener, each using the
+    service of the gateway's existing route for that hostname."""
+    services = {}
+    for item in json.loads(values.get("SERVICE_ROUTES_JSON") or "[]"):
+        if not item.get("paths"):
+            services.setdefault(item["host"], ("custom-" + item["name"], []))
+    imported = json.loads(values.get("IMPORTED_DYNAMIC_JSON") or "{}")
+    for router in imported.get("http", {}).get("routers", {}).values():
+        match = re.fullmatch(r"Host\(`([^`]+)`\)", str(router.get("rule", "")).strip())
+        if match and router.get("service"):
+            # The guest listener has its own source check; the private-network allowlist would pass anyway.
+            middlewares = [m for m in router.get("middlewares", []) if m != "trusted-only"]
+            services.setdefault(match[1], (router["service"], middlewares))
+    routes = []
+    for number, link in enumerate(links, 1):
+        if link["host"] not in services:
+            raise ValueError(f"Guest link {link['host']}: this gateway has no route for that whole hostname; "
+                             "add the website to the gateway first")
+        service, middlewares = services[link["host"]]
+        rule = f"Host(`{link['host']}`)"
+        path = link["path"]
+        if path != "/":
+            rule += f" && PathPrefix(`{path}`)" if path.endswith("/") else f" && (Path(`{path}`) || PathPrefix(`{path}/`))"
+        routes.append({"name": f"guest-link-{number}", "rule": rule, "service": service,
+                       "middlewares": ["portal-sources", *middlewares]})
+    return routes
+
+
 def server_source(backend):
     """The OpenVPN server's address as the gateway sees it, from its backend URL."""
     try:
@@ -111,6 +155,9 @@ def from_file(path):
             if ip.is_loopback or ip.is_unspecified or ip.is_link_local or ip.is_multicast:
                 raise ValueError("The guest portal listener must be a LAN address of this gateway")
             values["PORTAL_LISTEN_ADDRESS"], values["PORTAL_HTTPS_PORT"] = str(ip), str(port)
+        if data.get("guest_links") is not None:   # absent keeps the existing links
+            reserved = {values["OPENVPN_HOST"], "dashboard." + values["DOMAIN"], values.get("APPLE_RELAY_HOST", "")}
+            values["GUEST_LINKS_JSON"] = json.dumps(guest_links(data["guest_links"], values["DOMAIN"], reserved))
         if data.get("services") is not None:   # None keeps the existing services
             reserved = {values["OPENVPN_HOST"], "dashboard." + values["DOMAIN"]}
             values["SERVICE_ROUTES_JSON"] = json.dumps(services(data["services"], reserved))

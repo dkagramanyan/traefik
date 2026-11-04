@@ -1,8 +1,9 @@
 # Guest portal listener (entrypoint "portal", PORTAL_LISTEN_ADDRESS:PORTAL_HTTPS_PORT).
 # The OpenVPN server sends every HTTPS connection of a guest here: OpenVPN guests by
-# DNAT, Apple relay guests by pinning the portal hostname. Only the OpenVPN website
-# is served, and the X-OpenVPN-Portal-Only header makes the application answer
-# nothing but the personal portal pages. Other hostnames get 404.
+# DNAT, Apple relay guests by pinning the portal and guest-link hostnames. The
+# OpenVPN website is served with X-OpenVPN-Portal-Only, so the application
+# answers nothing but the personal portal pages; guest links get their own
+# routes below. Everything else gets 404.
 http:
   routers:
     guest-portal:
@@ -11,6 +12,15 @@ http:
       service: openvpn
       middlewares: [portal-sources, portal-only]
       tls: {}
+    # Guest links (Settings → Network on the OpenVPN server): only these hostnames and paths.
+    {{- range (env "GUEST_LINK_ROUTES_JSON" | default "[]" | fromJson) }}
+    {{ .name | toJson }}:
+      rule: {{ .rule | toJson }}
+      entryPoints: [portal]
+      service: {{ .service | toJson }}
+      middlewares: {{ .middlewares | toJson }}
+      tls: {}
+    {{- end }}
   middlewares:
     portal-only:
       headers:

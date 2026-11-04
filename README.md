@@ -171,6 +171,7 @@ gateway needs to know about it:
 | guest portal listener (`<gateway LAN ip>:9443`) | `PORTAL_LISTEN_ADDRESS`, `PORTAL_HTTPS_PORT` |
 | trusted networks (optional) | `TRUSTED_CIDRS`; absent or empty keeps the current list |
 | additional websites (optional) | `SERVICE_ROUTES_JSON`; absent keeps the current list |
+| guest links | `GUEST_LINKS_JSON`, rendered to `GUEST_LINK_ROUTES_JSON` |
 
 Copy the file into this folder and run:
 
@@ -199,6 +200,14 @@ gateway's **portal listener** (entrypoint `portal`, `dynamic/portal.yml`):
 * it routes only `OPENVPN_HOST` and adds `X-OpenVPN-Portal-Only: 1`, so the
   OpenVPN UI answers only the portal pages (`/` redirects to `/portal`, the
   admin API is 404). Other hostnames get 404.
+
+**Guest links** are extra pages the OpenVPN admin allows guests to open. Setup
+turns each `{host, path}` into a router on the portal listener (`Host` plus
+`Path`/`PathPrefix`, or the whole host for path `/`) that uses the service of
+the gateway's existing route for that hostname: an additional website from
+the OpenVPN UI or an adopted route whose rule is exactly ``Host(`name`)``.
+That route's middlewares come along, except `trusted-only`. A link to a
+hostname without such a route stops setup with an error.
 
 The regular HTTPS listener has no portal exception: the OpenVPN website there
 is for `TRUSTED_CIDRS` only.

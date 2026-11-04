@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 - 2026-11-04
+
+* Guest links from the OpenVPN UI's gateway file (`guest_links`): a router per
+  link on the guest portal listener, reusing the backend of the existing route
+  for its hostname, limited to the link's path or the whole host.
+
 ## 1.0.0 - 2026-11-04
 
 First release of the portable gateway, split out of the OpenVPN repository.
