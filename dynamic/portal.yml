@@ -1,25 +1,22 @@
-# Private client downloads. Missing PORTAL_CIDRS falls back to trusted networks.
+# Guest portal listener (entrypoint "portal", PORTAL_LISTEN_ADDRESS:PORTAL_HTTPS_PORT).
+# The OpenVPN server sends every HTTPS connection of a guest here: OpenVPN guests by
+# DNAT, Apple relay guests by pinning the portal hostname. Only the OpenVPN website
+# is served, and the X-OpenVPN-Portal-Only header makes the application answer
+# nothing but the personal portal pages. Other hostnames get 404.
 http:
   routers:
-    user-portal:
-      rule: {{ printf "Host(`%s`) && (Path(`/portal`) || Path(`/api/portal`) || PathPrefix(`/api/portal/`) || PathPrefix(`/static/`))" (env "OPENVPN_HOST") | toJson }}
-      priority: 200
-      entryPoints: [websecure]
-      service: openvpn
-      middlewares: [portal-only, portal-boundary]
-      tls: {}
-    guest-website:
+    guest-portal:
       rule: {{ printf "Host(`%s`)" (env "OPENVPN_HOST") | toJson }}
       entryPoints: [portal]
       service: openvpn
-      middlewares: [portal-only, portal-boundary]
+      middlewares: [portal-sources, portal-only]
       tls: {}
   middlewares:
-    portal-boundary:
+    portal-only:
       headers:
         customRequestHeaders:
           X-OpenVPN-Portal-Only: "1"
-    portal-only:
+    portal-sources:
       ipAllowList:
-        # Match the connection source, never an untrusted X-Forwarded-For header.
+        # The connection source (the OpenVPN server), never X-Forwarded-For.
         sourceRange: {{ env "PORTAL_CIDRS" | default (env "TRUSTED_CIDRS") | splitList "," | toJson }}

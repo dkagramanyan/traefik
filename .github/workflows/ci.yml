@@ -23,4 +23,4 @@ jobs:
       - run: python scripts/test_traefik.py
       - name: Build the pinned profile signer
         run: |
-          docker build -t profile-signer:ci -f signer/Dockerfile https://github.com/dkagramanyan/openvpn-server.git#562790a32953c91fb88799e673002c72fafdd994
+          docker build -t profile-signer:ci -f signer/Dockerfile https://github.com/dkagramanyan/openvpn-server.git#ffd1ef79c1a29294607ca52424d4216744db92b1

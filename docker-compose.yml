@@ -108,7 +108,7 @@ services:
   profile-signer:
     image: openvpn-profile-signer:local
     build:
-      context: ${PROFILE_SIGNER_SOURCE:-https://github.com/dkagramanyan/openvpn-server.git#562790a32953c91fb88799e673002c72fafdd994}
+      context: ${PROFILE_SIGNER_SOURCE:-https://github.com/dkagramanyan/openvpn-server.git#ffd1ef79c1a29294607ca52424d4216744db92b1}
       dockerfile: signer/Dockerfile
     profiles: [profile-signing]
     restart: unless-stopped

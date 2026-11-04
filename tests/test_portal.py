@@ -2,7 +2,6 @@
 import http.server
 import json
 import os
-from pathlib import Path
 import shutil
 import socket
 import ssl
@@ -27,8 +26,8 @@ def test_portal_settings(tmp_path):
             prepared(root)
 
 
-@pytest.mark.parametrize("guest_enabled", [False, True])
-def test_private_portal_routes(tmp_path, guest_enabled):
+@pytest.mark.parametrize("server_listed", [False, True])
+def test_guest_portal_routes(tmp_path, server_listed):
     binary = os.environ.get("TRAEFIK_BINARY") or shutil.which("traefik")
     if not binary:
         pytest.skip("Set TRAEFIK_BINARY to run live routing checks without Docker")
@@ -54,7 +53,8 @@ def test_private_portal_routes(tmp_path, guest_enabled):
     root = fresh(tmp_path / "config")
     values = prepared(root)
     values["TRUSTED_CIDRS"] = "127.0.0.2/32"
-    values["PORTAL_CIDRS"] = "127.0.0.2/32,127.0.0.3/32" if guest_enabled else ""
+    # 127.0.0.2 is a trusted admin; 127.0.0.3 the OpenVPN server; 127.0.0.4 anyone else.
+    values["PORTAL_CIDRS"] = "127.0.0.3/32" if server_listed else ""
     for key in values:
         if key.startswith("BACKEND_") and key not in ("BACKEND_HOST_ALIAS", "BACKEND_HOST_ADDRESS"):
             values[key] = f"http://127.0.0.1:{backend.server_port}"
@@ -75,8 +75,8 @@ def test_private_portal_routes(tmp_path, guest_enabled):
     args = [binary, f"--providers.file.directory={dynamic}"]
     args += [f"--entrypoints.{name}.address=127.0.0.1:{port}" for name, port in ports.items()]
     env = os.environ | values
-    if not guest_enabled:
-        env.pop("PORTAL_CIDRS", None)  # Existing container upgraded without a new env value.
+    if not server_listed:
+        env.pop("PORTAL_CIDRS", None)  # Falls back to TRUSTED_CIDRS.
 
     def request(entry, source, path, host="openvpn.example.test", method="GET"):
         sock = socket.create_connection(("127.0.0.1", ports[entry]), timeout=2, source_address=(source, 0))
@@ -90,7 +90,7 @@ def test_private_portal_routes(tmp_path, guest_enabled):
             deadline = time.monotonic() + 15
             while True:
                 try:
-                    if request("websecure", "127.0.0.2", "/portal") == 200:
+                    if request("websecure", "127.0.0.2", "/api/clients") == 200:
                         break
                 except (OSError, ValueError, IndexError):
                     pass
@@ -98,25 +98,24 @@ def test_private_portal_routes(tmp_path, guest_enabled):
                     log.seek(0)
                     pytest.fail(log.read())
                 time.sleep(0.1)
-            for entry in ("websecure", "portal"):
-                for path in ("/portal", "/api/portal", "/api/portal/me", "/api/portal/relay/status", "/static/app.js"):
-                    assert request(entry, "127.0.0.2", path) == 200
-                    assert request(entry, "127.0.0.3", path) == (200 if guest_enabled else 403)
-                    # Spoofed X-Forwarded-For cannot grant an unlisted source access.
-                    assert request(entry, "127.0.0.4", path) == 403
-                for path in ("/api/portal/relay.mobileconfig", "/api/portal/password"):
-                    assert request(entry, "127.0.0.2", path, method="POST") == 200
-                    assert request(entry, "127.0.0.3", path, method="POST") == (200 if guest_enabled else 403)
-                    assert request(entry, "127.0.0.4", path, method="POST") == 403
-                for path in ("/", "/api/clients", "/internal/relay-sign", "/portal-admin", "/api/portal-admin"):
-                    expected = 403 if entry == 'websecure' or not guest_enabled else 303 if path == '/' else 404
-                    assert request(entry, "127.0.0.3", path) == expected
+            portal_source = "127.0.0.3" if server_listed else "127.0.0.2"
+            for path in ("/portal", "/api/portal", "/api/portal/me", "/api/portal/relay/status", "/static/app.js"):
+                assert request("portal", portal_source, path) == 200
+                # Spoofed X-Forwarded-For cannot grant an unlisted source access.
+                assert request("portal", "127.0.0.4", path) == 403
+                # The regular listener has no portal exception: trusted networks only.
+                assert request("websecure", "127.0.0.3", path) == 403
+            for path in ("/api/portal/relay.mobileconfig", "/api/portal/password"):
+                assert request("portal", portal_source, path, method="POST") == 200
+                assert request("portal", "127.0.0.4", path, method="POST") == 403
+            # The application refuses everything but the portal on this listener.
+            for path in ("/", "/api/clients", "/internal/relay-sign", "/portal-admin", "/api/portal-admin"):
+                assert request("portal", portal_source, path) == (303 if path == "/" else 404)
+            assert request("portal", portal_source, "/portal", "grafana.example.test") == 404
+            assert request("portal", portal_source, "/", "app.example.test") == 404
             assert request("websecure", "127.0.0.2", "/api/clients") == 200
-            assert request("portal", "127.0.0.2", "/api/clients") == 404
-            assert request("portal", "127.0.0.2", "/portal", "grafana.example.test") == 404
             assert request("websecure", "127.0.0.2", "/", "app.example.test") == 200
             assert request("websecure", "127.0.0.4", "/", "app.example.test") == 403
-            assert request("portal", "127.0.0.2", "/", "app.example.test") == 404
             for path in ("/health", "/public/example"):
                 assert request("websecure", "127.0.0.4", path, "status.example.test") == 200
             for path in ("/admin", "/publicity"):

@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pytest
 
@@ -8,115 +7,97 @@ import network_settings
 import settings
 
 
-def export():
-    return {"version": 1, "gateway": {"domain": "example.test", "openvpn_host": "vpn.example.test",
-        "openvpn_backend": "http://192.0.2.20:8080", "relay_host": "relay.example.test", "relay_backend": "192.0.2.20:8444",
-        "trusted_cidrs": ["192.0.2.0/24"], "portal_cidrs": ["192.0.2.0/24", "10.8.0.0/24"],
-        "services": [{"name": "example", "host": "app.example.test", "url": "http://192.0.2.30:8080"}]},
-        "portal": {"enabled": True, "host": "vpn.example.test", "target": "192.0.2.10:9443", "destinations": ["198.51.100.10"]}}
+def export(**changes):
+    data = {"version": 2, "domain": "example.test", "openvpn_host": "vpn.example.test",
+            "openvpn_backend": "http://192.0.2.20:8080", "relay_host": "relay.example.test", "relay_backend": "192.0.2.20:8444",
+            "relay_public_url": "", "portal_listener": "192.0.2.10:9443", "trusted_cidrs": ["192.0.2.0/24"],
+            "services": [{"name": "example", "host": "app.example.test", "url": "http://192.0.2.30:8080"}]}
+    data.update(changes)
+    return data
+
+
+def write(tmp_path, data):
+    path = tmp_path / "network.private.json"
+    path.write_text(json.dumps(data))
+    return path
 
 
 def test_ui_export_import_preserves_credentials(tmp_path):
     root = fresh(tmp_path / "gateway")
     old = prepared(root)
     settings.materialize(root, old)
-    path = tmp_path / "network.private.json"
-    path.write_text(json.dumps(export()))
-    values = settings.prepare(root, network_file=path)
+    values = settings.prepare(root, network_file=write(tmp_path, export()))
     assert values["DASHBOARD_AUTH"] == old["DASHBOARD_AUTH"]
     assert values["OPENVPN_HOST"] == "vpn.example.test"
-    assert values["PORTAL_LISTEN_ADDRESS"] == "192.0.2.10"
+    assert (values["PORTAL_LISTEN_ADDRESS"], values["PORTAL_HTTPS_PORT"]) == ("192.0.2.10", "9443")
     assert json.loads(values["SERVICE_ROUTES_JSON"])[0]["public"] is False
     settings.materialize(root, values)
     assert (root / ".env").stat().st_mode & 0o777 == 0o600
 
 
+def test_the_openvpn_server_is_the_only_portal_and_signer_source(tmp_path):
+    values = network_settings.from_file(write(tmp_path, export()))
+    assert values["PORTAL_CIDRS"] == values["SIGNER_SOURCE_CIDRS"] == "192.0.2.20/32"
+    assert values["TRUSTED_CIDRS"] == "192.0.2.0/24"
+    # A new backend address moves both, even when .env already had values.
+    root = fresh(tmp_path / "gateway")
+    settings.materialize(root, prepared(root))
+    moved = settings.prepare(root, network_file=write(tmp_path, export(openvpn_backend="http://192.0.2.21:8080")))
+    assert moved["PORTAL_CIDRS"] == moved["SIGNER_SOURCE_CIDRS"] == "192.0.2.21/32"
+
+
 def test_public_relay_url_preserves_existing_gateway_listener(tmp_path):
-    data = export()
-    data["gateway"].update(relay_public_url="https://relay.example.test:9444")
-    path = tmp_path / "network.private.json"
-    path.write_text(json.dumps(data))
-    values = network_settings.from_file(path)
+    values = network_settings.from_file(write(tmp_path, export(relay_public_url="https://relay.example.test:9444")))
     assert values["APPLE_RELAY_URL"] == "https://relay.example.test:9444"
     assert "APPLE_RELAY_PORT" not in values
     assert values["APPLE_RELAY_BACKEND"] == "192.0.2.20:8444"
 
 
-def test_portal_listener_can_be_deployed_before_guest_access_is_enabled(tmp_path):
-    data = export()
-    data["portal"]["enabled"] = False
-    path = tmp_path / "network.private.json"
-    path.write_text(json.dumps(data))
-    values = network_settings.from_file(path)
-    assert values["PORTAL_LISTEN_ADDRESS"] == "192.0.2.10"
-    assert values["PORTAL_HTTPS_PORT"] == "9443"
+def test_without_a_listener_the_portal_stays_on_loopback(tmp_path):
+    values = network_settings.from_file(write(tmp_path, export(portal_listener="")))
+    assert (values["PORTAL_LISTEN_ADDRESS"], values["PORTAL_HTTPS_PORT"]) == ("127.0.0.1", "9443")
 
 
-def test_guest_allowlist_export_needs_no_extra_listener(tmp_path):
-    data = export()
-    data["portal"].update(enabled=True, target="", destinations=[])
-    data["gateway"]["portal_cidrs"] = ["192.0.2.0/24", "10.8.0.128/25"]
-    path = tmp_path / "network.private.json"
-    path.write_text(json.dumps(data))
-    values = network_settings.from_file(path)
-    assert values["PORTAL_CIDRS"] == "192.0.2.0/24,10.8.0.128/25"
-    assert values["TRUSTED_CIDRS"] == "192.0.2.0/24"
-    assert values["PORTAL_LISTEN_ADDRESS"] == "127.0.0.1"
-
-
-def test_optional_service_inventory_is_preserved_until_explicit_replacement(tmp_path):
+def test_service_inventory_is_kept_unless_the_file_lists_services(tmp_path):
     root = fresh(tmp_path / "gateway")
     old = prepared(root)
     old["SERVICE_ROUTES_JSON"] = json.dumps([{"name": "existing", "host": "existing.example.test", "url": "http://192.0.2.30:8000"}])
     old["IMPORTED_DYNAMIC_JSON"] = json.dumps({"http": {"routers": {"legacy": {"rule": "Host(`legacy.example.test`)"}}}})
     settings.materialize(root, old)
-    data = export()
-    data["gateway"].update(replace_services=False, services=[])
-    path = tmp_path / "network.private.json"
-    path.write_text(json.dumps(data))
-    values = settings.prepare(root, network_file=path)
+    values = settings.prepare(root, network_file=write(tmp_path, export(services=None)))
     assert json.loads(values["SERVICE_ROUTES_JSON"])[0]["name"] == "existing"
     assert values["IMPORTED_DYNAMIC_JSON"] == old["IMPORTED_DYNAMIC_JSON"]
+    values = settings.prepare(root, network_file=write(tmp_path, export(services=[])))
+    assert json.loads(values["SERVICE_ROUTES_JSON"]) == []
 
 
-@pytest.mark.parametrize("case", ["public_portal", "wide_network", "template_url", "string_bool", "admin_port"])
-def test_invalid_exports_are_rejected(tmp_path, case):
+def test_empty_trusted_list_keeps_gateway_administrator_access(tmp_path):
+    root = fresh(tmp_path / "gateway")
+    old = prepared(root)
+    old["TRUSTED_CIDRS"] = "192.0.2.77/32,2001:db8::77/128"
+    settings.materialize(root, old)
+    values = settings.prepare(root, network_file=write(tmp_path, export(trusted_cidrs=[])))
+    assert values["TRUSTED_CIDRS"] == old["TRUSTED_CIDRS"]
+    assert values["PORTAL_CIDRS"] == "192.0.2.20/32"
+
+
+def test_first_import_keeps_loopback_only_admin_defaults(tmp_path):
+    values = settings.prepare(fresh(tmp_path / "gateway"), network_file=write(tmp_path, export(trusted_cidrs=[])))
+    assert values["TRUSTED_CIDRS"] == "127.0.0.1/32,::1/128"
+
+
+@pytest.mark.parametrize("case", ["old_version", "public_portal", "wide_network", "template_url", "string_bool",
+                                  "admin_port", "loopback_listener", "relay_url_host"])
+def test_invalid_files_are_rejected(tmp_path, case):
     data = export()
-    service = data["gateway"]["services"][0]
+    service = data["services"][0]
+    if case == "old_version": data["version"] = 1
     if case == "public_portal": service.update(host="vpn.example.test", public=True)
-    if case == "wide_network": data["gateway"]["trusted_cidrs"] = ["0.0.0.0/0"]
+    if case == "wide_network": data["trusted_cidrs"] = ["0.0.0.0/0"]
     if case == "template_url": service["url"] = "http://{{env`SECRET`}}"
     if case == "string_bool": service["public"] = "false"
-    if case == "admin_port": data["portal"]["target"] = "192.0.2.10:443"
-    path = tmp_path / "network.private.json"
-    path.write_text(json.dumps(data))
-    with pytest.raises(ValueError): network_settings.from_file(path)
-
-
-def test_website_update_preserves_gateway_administrator_access(tmp_path):
-    root = fresh(tmp_path / 'gateway')
-    old = prepared(root)
-    old['TRUSTED_CIDRS'] = '192.0.2.77/32,2001:db8::77/128'
-    old['PORTAL_CIDRS'] = '198.51.100.99/32'
-    settings.materialize(root, old)
-    data = export()
-    data['gateway'].update(trusted_cidrs=[], portal_cidrs=['192.0.2.20/32','10.8.0.128/25'])
-    path = tmp_path / 'network.private.json'
-    path.write_text(json.dumps(data))
-    assert 'TRUSTED_CIDRS' not in network_settings.from_file(path)
-    values = settings.prepare(root, network_file=path)
-    assert values['TRUSTED_CIDRS'] == old['TRUSTED_CIDRS']
-    assert values['PORTAL_CIDRS'] == old['TRUSTED_CIDRS'] + ',192.0.2.20/32,10.8.0.128/25'
-    assert '10.8.0.128/25' not in values['TRUSTED_CIDRS']
-    settings.materialize(root, values)
-    assert settings.prepare(root, network_file=path)['PORTAL_CIDRS'] == values['PORTAL_CIDRS']
-
-
-def test_first_website_import_keeps_loopback_only_admin_defaults(tmp_path):
-    root = fresh(tmp_path / 'gateway')
-    data = export()
-    data['gateway']['trusted_cidrs'] = []
-    path = tmp_path / 'network.private.json'
-    path.write_text(json.dumps(data))
-    values = settings.prepare(root, network_file=path)
-    assert values['TRUSTED_CIDRS'] == '127.0.0.1/32,::1/128'
+    if case == "admin_port": data["portal_listener"] = "192.0.2.10:443"
+    if case == "loopback_listener": data["portal_listener"] = "127.0.0.1:9443"
+    if case == "relay_url_host": data["relay_public_url"] = "https://other.example.test:8443"
+    with pytest.raises(ValueError):
+        network_settings.from_file(write(tmp_path, data))

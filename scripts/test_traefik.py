@@ -140,7 +140,7 @@ socketserver.TCPServer(("0.0.0.0",8444),Echo).serve_forever()
             expected_routes = {
                 name + "@file" for name in (
                     "openvpn", "https-redirect", "custom-private", "custom-public",
-                    "user-portal", "guest-website", "dashboard-test", "apple-relay",
+                    "guest-portal", "dashboard-test", "apple-relay",
                 )
             }
             observed_routes = {}
@@ -157,8 +157,8 @@ socketserver.TCPServer(("0.0.0.0",8444),Echo).serve_forever()
                 raise RuntimeError(f"{exc}; expected {sorted(expected_routes)}; observed {observed_routes}") from exc
             for name in ("openvpn", "custom-private"):
                 assert "trusted-only@file" in loaded[name + "@file"]["middlewares"]
-            assert loaded["guest-website@file"]["entryPoints"] == ["portal"]
-            assert "portal-boundary@file" in loaded["guest-website@file"]["middlewares"]
+            assert loaded["guest-portal@file"]["entryPoints"] == ["portal"]
+            assert loaded["guest-portal@file"]["middlewares"] == ["portal-sources@file", "portal-only@file"]
             # Unlisted sources cannot reach the portal or management APIs.
             proxy_ip = run("docker", "inspect", proxy, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}")
             client = start("client", python_image, "sleep", "120", options=("--add-host", "openvpn.example.test:" + proxy_ip, "--add-host", "dashboard.example.test:" + proxy_ip))

@@ -112,7 +112,7 @@ services or change the signer build.
 | `GRAFANA_ADMIN_PASSWORD` | Existing or generated Grafana initialization password |
 | `BACKEND_OPENVPN`, `SERVICE_ROUTES_JSON` | Core backend and private UI-generated service inventory |
 | `TRUSTED_CIDRS` | Comma-separated source networks allowed into private websites |
-| `PORTAL_CIDRS` | Portal-only source networks, including permitted guests; empty uses `TRUSTED_CIDRS` |
+| `PORTAL_CIDRS` | Sources allowed into the guest portal listener (the OpenVPN server); empty uses `TRUSTED_CIDRS` |
 | `BACKEND_HOST_ALIAS`, `BACKEND_HOST_ADDRESS` | Optional legacy hostname mapping |
 | `HTTP_PORT`, `HTTPS_PORT`, `APPLE_RELAY_PORT`, `LISTEN_ADDRESS` | Host port bindings |
 | `TRAEFIK_NETWORK`, `COMPOSE_PROJECT_NAME` | Docker networking and existing volume ownership |
@@ -157,112 +157,72 @@ Certificates supplied as local `.crt`/`.key` files retain their existing renewal
 process. Traefik serves them and reloads changes; it does not renew arbitrary
 imported file certificates through ACME.
 
-## Network settings from the admin UI
+## Network settings from the OpenVPN UI
 
-The repository ships no LAN inventory. Configure addresses, domains and additional
-services in the OpenVPN admin UI under **Settings → Network and private portal**.
-Network settings are private runtime data, not source code or test fixtures.
+This repository ships no addresses. The OpenVPN server's **Settings → Network**
+page produces a gateway file, `network.private.json`, with everything the
+gateway needs to know about it:
 
-1. Review the shared domain, website/relay addresses and internal backend in
-   the guided settings. Detection can suggest editable internal IPs; existing
-   public addresses and ports stay as configured.
-2. Existing additional services are kept by default. To replace their inventory,
-   enable **Manage and replace the gateway's additional services here**, then
-   include every required service. New services are private by default.
-3. Choose **Save and download Traefik settings**. Copy the resulting
-   `network.private.json` privately to the gateway and run:
+| In the file | Becomes in `.env` |
+|---|---|
+| domain, website hostname | `DOMAIN`, `OPENVPN_HOST` |
+| the server's web address (`http://<ip>:8080`) | `BACKEND_OPENVPN`; its IP also `SIGNER_SOURCE_CIDRS` and `PORTAL_CIDRS` |
+| relay hostname, public URL, backend (`<ip>:8444`) | `APPLE_RELAY_HOST`, `APPLE_RELAY_URL`, `APPLE_RELAY_BACKEND` |
+| guest portal listener (`<gateway LAN ip>:9443`) | `PORTAL_LISTEN_ADDRESS`, `PORTAL_HTTPS_PORT` |
+| trusted networks (optional) | `TRUSTED_CIDRS`; absent or empty keeps the current list |
+| additional websites (optional) | `SERVICE_ROUTES_JSON`; absent keeps the current list |
 
-   ```sh
-   ./manage setup --network-file ./network.private.json
-   sudo docker compose config --quiet && sudo docker compose up -d traefik
-   ```
+Copy the file into this folder and run:
 
-The importer validates the file, preserves existing credentials and writes the
-necessary values to the gateway's ignored, mode-0600 `.env`. You do not enter
-network values in `.env` manually. DNS-provider credentials remain private setup
-secrets. Export files are ignored by Git; keep them private after download.
-The application cannot directly configure a separate gateway without a management
-connection, so transferring the generated file is an explicit deployment step.
+```sh
+./manage setup --network-file ./network.private.json
+sudo docker compose config --quiet && sudo docker compose up -d
+```
 
-Before upgrading an older deployment, retain a private configuration backup.
-Adoption of a literal legacy routing file preserves additional routes in ignored
-`dynamic/imported-private.yml`. New UI exports preserve that inventory unless
-service replacement is explicitly enabled. Older exports without a replacement
-flag retain their original replacement behavior. Never commit generated runtime
-configuration. Public relay URLs can be imported for signing, but importing them
-does not change the gateway's existing listener ports or router port forwards.
+The importer validates every value before writing it to `.env` (mode 0600) and
+keeps all credentials. The file contains no secrets but describes your network;
+it is ignored by Git, keep it private. Files from 1.x development builds
+(version 1) are refused: download the file again.
 
-### Private portal for LAN, OpenVPN guests and Apple Relay guests
+### Guest portal
 
-Configure guest access in the OpenVPN UI with **Allow guests to use the OpenVPN
-website**. It suggests the gateway address, website DNS answers and a private
-website listener. Detailed overrides remain under **Advanced settings → Website routing**. Export and deploy the gateway settings before
-restarting VPN.
+Guests of the OpenVPN server and its Apple relay reach only their personal
+portal. The OpenVPN server sends every HTTPS connection of a guest to this
+gateway's **portal listener** (entrypoint `portal`, `dynamic/portal.yml`):
 
-The guest subnet and VPN/relay server egress IP belong in `PORTAL_CIDRS`, separate
-from `TRUSTED_CIDRS` for other private services. Filtering uses the connection
-source address: [Traefik's IPAllowList](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/ipallowlist/)
-can see a NAT egress address instead of an individual guest. A forged forwarded
-header cannot grant access.
+* it listens on `PORTAL_LISTEN_ADDRESS:PORTAL_HTTPS_PORT` (the LAN address
+  from the gateway file, port 9443; `127.0.0.1` until one is set) and needs
+  no port forward from the internet;
+* it accepts connections only from `PORTAL_CIDRS` (the OpenVPN server's
+  address; empty falls back to `TRUSTED_CIDRS`), checked on the connection
+  source, never on `X-Forwarded-For`;
+* it routes only `OPENVPN_HOST` and adds `X-OpenVPN-Portal-Only: 1`, so the
+  OpenVPN UI answers only the portal pages (`/` redirects to `/portal`, the
+  admin API is 404). Other hostnames get 404.
 
-The OpenVPN settings page does not require re-entering administrator source
-networks. An empty gateway `trusted_cidrs` list keeps the gateway’s existing
-`TRUSTED_CIDRS` (loopback-only on a fresh setup). Those existing administrator
-sources also remain allowed on portal/static paths so a website update cannot
-lock out their admin browser. Guest sources are added only to `PORTAL_CIDRS`.
-A nonempty explicit override still replaces `TRUSTED_CIDRS`.
+The regular HTTPS listener has no portal exception: the OpenVPN website there
+is for `TRUSTED_CIDRS` only.
 
-The isolated listener, normally gateway IPv4:9443, forwards only the OpenVPN
-hostname. It supplies `X-OpenVPN-Portal-Only: 1`; the OpenVPN service owns the
-URL boundary and returns 404 for administrative APIs, even with an admin cookie.
-Opening its root redirects to `/portal`. This header only restricts access and
-never grants authentication or permissions. TLS and source filtering remain in
-Traefik; profile signing remains next to the gateway's private certificate keys.
-Update OpenVPN before deploying this route contract.
-
-The browser URL stays `https://your-openvpn-host/portal`. The VPN/relay service
-routes only guest website traffic to the isolated listener, leaving other LAN
-blocks intact. Other hostnames on that listener return 404. Keep it private;
-it needs no WAN port forward. The shared HTTPS listener retains its separate
-personal-portal path router so existing administrator access still works.
-
-A listener can be exported before guest access is enabled. After deployment,
-use **Save and restart VPN** to apply the website exception. This briefly
-reconnects VPN clients. Older allowlist-only exports remain accepted for
-networks with an existing route; they do not bypass guest destination blocks.
-
-Verify after deployment: LAN and both guest transports can sign in/download;
-other private websites and administrator APIs fail through the isolated route;
-an external connection with VPN/relay disabled receives 403 for `/portal`.
-The private listener returns 404 for `/api/clients`, even from an allowed LAN
-source. First-time users receive their initial profile privately or from the LAN.
+Check after deploying: from the OpenVPN server,
+`curl -k --resolve openvpn.<domain>:9443:<gateway ip> https://openvpn.<domain>:9443/api/clients`
+returns 404 and `.../portal` the sign-in page; from any other machine the
+listener answers 403.
 
 ### Automatic profile signing
 
-Setup enables the `profile-signing` Compose profile and generates its shared
-token if missing. The signer builds from a pinned public application revision,
-reads the ACME directory through a read-only mount and reloads renewed identities.
-It needs no second source checkout and exposes no host port. Its read-only
-filesystem capability lets it read a mode-0600 ACME store owned by either the
-setup user or Traefik; the certificate directory is mounted read-only.
+Setup enables the `profile-signing` Compose profile and generates
+`RELAY_PROFILE_SIGNING_TOKEN` once. The signer is built from a pinned revision
+of the openvpn-server repository, reads the ACME store through a read-only
+mount (its only capability is reading files it does not own) and picks up
+renewed certificates by itself. It publishes no port: Traefik routes
+`https://<OPENVPN_HOST>/internal/relay-sign` to it for `SIGNER_SOURCE_CIDRS`
+only, and every request also needs the token.
 
-Only `SIGNER_SOURCE_CIDRS` may call the HTTPS signing path, and a shared token is
-also required. Setup derives that source range from the OpenVPN backend's literal
-IP when possible. Set it explicitly if the backend uses a hostname or the network
-changes its source address.
-
-Copy these values from this server's `.env` into the **OpenVPN host's** `.env`:
-
-```dotenv
-OVPN_RELAY_SIGNER_URL=https://openvpn.example.com/internal/relay-sign
-RELAY_PROFILE_SIGNING_TOKEN=THE_SAME_GENERATED_VALUE
-```
-
-Recreate the OpenVPN UI and check **Relay → Signed downloads enabled**. The
-OpenVPN application verifies the signature and profile contents before returning
-a file. Traefik keeps renewing the TLS identity; you do not copy private keys to
-the OpenVPN machine. Installed relay access does not depend on the signer staying
-online; new signed downloads do.
+On the OpenVPN server, open **Relay → Profile signing** and enter
+`https://openvpn.<domain>/internal/relay-sign` and the same token (or set
+`OVPN_RELAY_SIGNER_URL` and `RELAY_PROFILE_SIGNING_TOKEN` in its `.env`). The
+OpenVPN UI checks every signed file before handing it out. Installed profiles
+keep working when the signer is down; only new downloads need it.
 
 ## Metrics worker and Docker logs
 
@@ -319,20 +279,16 @@ builds the pinned profile signer.
 
 ## Production update
 
-Update OpenVPN/relay first using that repository's
-[production guide](https://github.com/dkagramanyan/openvpn-server#production-update-openvpnrelay-and-traefik).
-In its Settings page, review the detected addresses and download
-`network.private.json`. Copy that file into `~/traefik/` on the gateway, then run:
+Update the OpenVPN server first (its README, *Upgrading to 2.0*), download the
+gateway file there, copy it into this folder, then:
 
 ```sh
 cd ~/traefik &&
 git pull --ff-only &&
-test -f ./network.private.json &&
 ./manage setup --network-file ./network.private.json &&
 sudo docker compose config --quiet &&
 sudo docker compose up -d --build --remove-orphans
 ```
 
-Use the actual downloaded file. `/path/to/network.private.json` is a placeholder,
-not a file provided by Git. Preserve `.env`, certificates, ACME state and signing
-credentials. Apply the gateway before restarting VPN for a website routing change.
+Afterwards use **Save and restart VPN** on the OpenVPN server. Keep `.env`,
+`letsencrypt/`, `certs/` and the Docker volumes; never run `docker compose down -v`.
