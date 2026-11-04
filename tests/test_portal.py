@@ -42,6 +42,8 @@ def test_private_portal_routes(tmp_path, guest_enabled):
         def log_message(self, *_):
             pass
 
+        do_POST = do_GET
+
     backend = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Backend)
     threading.Thread(target=backend.serve_forever, daemon=True).start()
     root = fresh(tmp_path / "config")
@@ -71,10 +73,10 @@ def test_private_portal_routes(tmp_path, guest_enabled):
     if not guest_enabled:
         env.pop("PORTAL_CIDRS", None)  # Existing container upgraded without a new env value.
 
-    def request(entry, source, path, host="openvpn.example.test"):
+    def request(entry, source, path, host="openvpn.example.test", method="GET"):
         sock = socket.create_connection(("127.0.0.1", ports[entry]), timeout=2, source_address=(source, 0))
         with ssl._create_unverified_context().wrap_socket(sock, server_hostname=host) as conn:
-            conn.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nX-Forwarded-For: 127.0.0.2\r\nConnection: close\r\n\r\n").encode())
+            conn.sendall((f"{method} {path} HTTP/1.1\r\nHost: {host}\r\nX-Forwarded-For: 127.0.0.2\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").encode())
             return int(conn.recv(4096).split()[1])
 
     with (root / "traefik.log").open("w+") as log:
@@ -92,11 +94,15 @@ def test_private_portal_routes(tmp_path, guest_enabled):
                     pytest.fail(log.read())
                 time.sleep(0.1)
             for entry in ("websecure", "portal"):
-                for path in ("/portal", "/api/portal", "/api/portal/me", "/static/app.js"):
+                for path in ("/portal", "/api/portal", "/api/portal/me", "/api/portal/relay/status", "/static/app.js"):
                     assert request(entry, "127.0.0.2", path) == 200
                     assert request(entry, "127.0.0.3", path) == (200 if guest_enabled else 403)
                     # Spoofed X-Forwarded-For cannot grant an unlisted source access.
                     assert request(entry, "127.0.0.4", path) == 403
+                for path in ("/api/portal/relay.mobileconfig", "/api/portal/password"):
+                    assert request(entry, "127.0.0.2", path, method="POST") == 200
+                    assert request(entry, "127.0.0.3", path, method="POST") == (200 if guest_enabled else 403)
+                    assert request(entry, "127.0.0.4", path, method="POST") == 403
                 for path in ("/", "/api/clients", "/internal/relay-sign", "/portal-admin", "/api/portal-admin"):
                     assert request(entry, "127.0.0.3", path) == (403 if entry == "websecure" else 404)
             assert request("websecure", "127.0.0.2", "/api/clients") == 200

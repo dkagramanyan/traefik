@@ -31,6 +31,42 @@ def test_ui_export_import_preserves_credentials(tmp_path):
     assert (root / ".env").stat().st_mode & 0o777 == 0o600
 
 
+def test_public_relay_url_preserves_existing_gateway_listener(tmp_path):
+    data = export()
+    data["gateway"].update(relay_public_url="https://relay.example.test:9444")
+    path = tmp_path / "network.private.json"
+    path.write_text(json.dumps(data))
+    values = network_settings.from_file(path)
+    assert values["APPLE_RELAY_URL"] == "https://relay.example.test:9444"
+    assert "APPLE_RELAY_PORT" not in values
+    assert values["APPLE_RELAY_BACKEND"] == "192.0.2.20:8444"
+
+
+def test_portal_listener_can_be_deployed_before_guest_access_is_enabled(tmp_path):
+    data = export()
+    data["portal"]["enabled"] = False
+    path = tmp_path / "network.private.json"
+    path.write_text(json.dumps(data))
+    values = network_settings.from_file(path)
+    assert values["PORTAL_LISTEN_ADDRESS"] == "192.0.2.10"
+    assert values["PORTAL_HTTPS_PORT"] == "9443"
+
+
+def test_optional_service_inventory_is_preserved_until_explicit_replacement(tmp_path):
+    root = fresh(tmp_path / "gateway")
+    old = prepared(root)
+    old["SERVICE_ROUTES_JSON"] = json.dumps([{"name": "existing", "host": "existing.example.test", "url": "http://192.0.2.30:8000"}])
+    old["IMPORTED_DYNAMIC_JSON"] = json.dumps({"http": {"routers": {"legacy": {"rule": "Host(`legacy.example.test`)"}}}})
+    settings.materialize(root, old)
+    data = export()
+    data["gateway"].update(replace_services=False, services=[])
+    path = tmp_path / "network.private.json"
+    path.write_text(json.dumps(data))
+    values = settings.prepare(root, network_file=path)
+    assert json.loads(values["SERVICE_ROUTES_JSON"])[0]["name"] == "existing"
+    assert values["IMPORTED_DYNAMIC_JSON"] == old["IMPORTED_DYNAMIC_JSON"]
+
+
 @pytest.mark.parametrize("case", ["public_portal", "wide_network", "template_url", "string_bool", "admin_port"])
 def test_invalid_exports_are_rejected(tmp_path, case):
     data = export()

@@ -60,17 +60,29 @@ def from_file(path):
         if not target_host or re.search(r"[\s`{}\\/@?#]", target_host) or not 1 <= int(port) <= 65535:
             raise ValueError("Invalid relay backend address")
         values["APPLE_RELAY_BACKEND"] = gateway["relay_backend"]
-        values["SERVICE_ROUTES_JSON"] = json.dumps(services(gateway["services"], {values["OPENVPN_HOST"], "dashboard." + values["DOMAIN"]}))
+        if gateway.get("relay_public_url"):
+            public_url = url(gateway["relay_public_url"])
+            parsed = urlsplit(public_url)
+            if parsed.scheme != "https" or parsed.hostname != values["APPLE_RELAY_HOST"] or parsed.path or parsed.query or parsed.fragment:
+                raise ValueError("Public relay URL must be an HTTPS origin matching the relay hostname")
+            values["APPLE_RELAY_URL"] = public_url
+        imported_services = services(gateway["services"], {values["OPENVPN_HOST"], "dashboard." + values["DOMAIN"]})
+        replace_services = gateway.get("replace_services", True)
+        if not isinstance(replace_services, bool):
+            raise ValueError("Service replacement must be true or false")
+        if replace_services:
+            values["SERVICE_ROUTES_JSON"] = json.dumps(imported_services)
+            values["IMPORTED_DYNAMIC_JSON"] = "{}"
+        elif imported_services:
+            raise ValueError("Enable service replacement to import an additional service inventory")
         values["PORTAL_LISTEN_ADDRESS"], values["PORTAL_HTTPS_PORT"] = "127.0.0.1", "9443"
-        if portal["enabled"]:
+        if portal["enabled"] or portal.get("target"):
             if portal["host"] != values["OPENVPN_HOST"]: raise ValueError("Portal and OpenVPN hosts must match")
             address, port = portal["target"].rsplit(":", 1)
             ip = ipaddress.IPv4Address(address)
             if ip.is_loopback or ip.is_unspecified or ip.is_link_local or ip.is_multicast or not 1024 <= int(port) <= 65535:
                 raise ValueError("Portal target must be a dedicated LAN listener")
             values["PORTAL_LISTEN_ADDRESS"], values["PORTAL_HTTPS_PORT"] = str(ip), str(int(port))
-        # A complete UI export replaces legacy imported inventory, kept only privately.
-        values["IMPORTED_DYNAMIC_JSON"] = "{}"
         return values
     except (KeyError, TypeError, AttributeError) as exc:
         raise ValueError("Invalid network export; download it again from Settings → Network") from exc

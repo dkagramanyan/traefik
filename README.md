@@ -163,15 +163,17 @@ The repository ships no LAN inventory. Configure addresses, domains and addition
 services in the OpenVPN admin UI under **Settings → Network and private portal**.
 Network settings are private runtime data, not source code or test fixtures.
 
-1. Enter the gateway domain, OpenVPN website hostname/backend, relay TLS
-   hostname/backend, and the networks permitted to access private services.
-2. Add your own services with **Add service**. They are private by default. An
-   optional path list limits a route; a trailing slash includes child paths.
-3. Save, then choose **Download saved Traefik settings**. Copy the resulting
+1. Review the shared domain, website/relay addresses and internal backend in
+   the guided settings. Detection can suggest editable internal IPs; existing
+   public addresses and ports stay as configured.
+2. Existing additional services are kept by default. To replace their inventory,
+   enable **Manage and replace the gateway's additional services here**, then
+   include every required service. New services are private by default.
+3. Choose **Save and download Traefik settings**. Copy the resulting
    `network.private.json` privately to the gateway and run:
 
    ```sh
-   ./manage setup --network-file /path/to/network.private.json
+   ./manage setup --network-file ./network.private.json
    sudo docker compose config --quiet && sudo docker compose up -d traefik
    ```
 
@@ -184,9 +186,11 @@ connection, so transferring the generated file is an explicit deployment step.
 
 Before upgrading an older deployment, retain a private configuration backup.
 Adoption of a literal legacy routing file preserves additional routes in ignored
-`dynamic/imported-private.yml`. A complete UI export replaces that imported
-inventory with the services entered in the UI. Configure all desired services
-before importing. Never commit generated runtime configuration.
+`dynamic/imported-private.yml`. New UI exports preserve that inventory unless
+service replacement is explicitly enabled. Older exports without a replacement
+flag retain their original replacement behavior. Never commit generated runtime
+configuration. Public relay URLs can be imported for signing, but importing them
+does not change the gateway's existing listener ports or router port forwards.
 
 ### Private portal for LAN, OpenVPN guests and Apple Relay guests
 
@@ -199,6 +203,8 @@ clients. Keep the dedicated listener off WAN port forwards.
 
 Deploy the downloaded Traefik settings first. Then save the private portal as
 **enabled** and use **Save and restart VPN**. This briefly reconnects VPN clients.
+The listener address can be exported while guest access is still disabled, so
+this order does not require enabling guest access before the gateway is ready.
 The same UI stores the VPN subnet, dynamic pool, guest range, DNS, pushed routes,
 LAN blocks, extra guest blocks and trusted proxy addresses. Relay changes apply
 to new requests and to existing connections through periodic authorization.
