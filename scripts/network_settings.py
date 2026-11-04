@@ -54,8 +54,10 @@ def from_file(path):
         gateway, portal = data["gateway"], data["portal"]
         values = {"DOMAIN": host(gateway["domain"]), "OPENVPN_HOST": host(gateway["openvpn_host"]),
                   "APPLE_RELAY_HOST": host(gateway["relay_host"]), "BACKEND_OPENVPN": url(gateway["openvpn_backend"]),
-                  "TRUSTED_CIDRS": networks(gateway["trusted_cidrs"]), "PORTAL_CIDRS": networks(gateway["portal_cidrs"])}
-        if not values["TRUSTED_CIDRS"]: raise ValueError("Supply private-service source networks")
+                  "PORTAL_CIDRS": networks(gateway["portal_cidrs"])}
+        trusted = networks(gateway["trusted_cidrs"])
+        if trusted:
+            values["TRUSTED_CIDRS"] = trusted
         target_host, port = gateway["relay_backend"].rsplit(":", 1)
         if not target_host or re.search(r"[\s`{}\\/@?#]", target_host) or not 1 <= int(port) <= 65535:
             raise ValueError("Invalid relay backend address")

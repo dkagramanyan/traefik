@@ -166,7 +166,15 @@ def prepare(root=ROOT, import_from=None, domain=None, email=None, hasher=passwor
     for key, value in imported.items():
         if not current.get(key): values[key] = value
     if network_file:
-        values.update(network_settings.from_file(Path(network_file)))
+        network_values = network_settings.from_file(Path(network_file))
+        if "TRUSTED_CIDRS" not in network_values:
+            # A website-only update must keep existing administrator access,
+            # including the portal/static route used by their admin browser.
+            network_values["PORTAL_CIDRS"] = ",".join(dict.fromkeys(filter(None, [
+                *values.get("TRUSTED_CIDRS", "").split(","),
+                *network_values["PORTAL_CIDRS"].split(","),
+            ])))
+        values.update(network_values)
     if domain: values["DOMAIN"] = domain
     if email: values["ACME_EMAIL"] = email
     domain = values.get("DOMAIN", "").strip().lower().rstrip(".")

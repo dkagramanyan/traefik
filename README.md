@@ -196,8 +196,7 @@ does not change the gateway's existing listener ports or router port forwards.
 
 Configure guest access in the OpenVPN UI with **Allow guests to use the OpenVPN
 website**. It suggests the gateway address, website DNS answers and a private
-website listener. Detailed overrides remain under **Advanced settings → Private
-services and website routing**. Export and deploy the gateway settings before
+website listener. Detailed overrides remain under **Advanced settings → Website routing**. Export and deploy the gateway settings before
 restarting VPN.
 
 The guest subnet and VPN/relay server egress IP belong in `PORTAL_CIDRS`, separate
@@ -205,6 +204,13 @@ from `TRUSTED_CIDRS` for other private services. Filtering uses the connection
 source address: [Traefik's IPAllowList](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/ipallowlist/)
 can see a NAT egress address instead of an individual guest. A forged forwarded
 header cannot grant access.
+
+The OpenVPN settings page does not require re-entering administrator source
+networks. An empty gateway `trusted_cidrs` list keeps the gateway’s existing
+`TRUSTED_CIDRS` (loopback-only on a fresh setup). Those existing administrator
+sources also remain allowed on portal/static paths so a website update cannot
+lock out their admin browser. Guest sources are added only to `PORTAL_CIDRS`.
+A nonempty explicit override still replaces `TRUSTED_CIDRS`.
 
 The isolated listener, normally gateway IPv4:9443, forwards only the OpenVPN
 hostname. It supplies `X-OpenVPN-Portal-Only: 1`; the OpenVPN service owns the

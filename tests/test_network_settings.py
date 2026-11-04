@@ -91,3 +91,32 @@ def test_invalid_exports_are_rejected(tmp_path, case):
     path = tmp_path / "network.private.json"
     path.write_text(json.dumps(data))
     with pytest.raises(ValueError): network_settings.from_file(path)
+
+
+def test_website_update_preserves_gateway_administrator_access(tmp_path):
+    root = fresh(tmp_path / 'gateway')
+    old = prepared(root)
+    old['TRUSTED_CIDRS'] = '192.0.2.77/32,2001:db8::77/128'
+    old['PORTAL_CIDRS'] = '198.51.100.99/32'
+    settings.materialize(root, old)
+    data = export()
+    data['gateway'].update(trusted_cidrs=[], portal_cidrs=['192.0.2.20/32','10.8.0.128/25'])
+    path = tmp_path / 'network.private.json'
+    path.write_text(json.dumps(data))
+    assert 'TRUSTED_CIDRS' not in network_settings.from_file(path)
+    values = settings.prepare(root, network_file=path)
+    assert values['TRUSTED_CIDRS'] == old['TRUSTED_CIDRS']
+    assert values['PORTAL_CIDRS'] == old['TRUSTED_CIDRS'] + ',192.0.2.20/32,10.8.0.128/25'
+    assert '10.8.0.128/25' not in values['TRUSTED_CIDRS']
+    settings.materialize(root, values)
+    assert settings.prepare(root, network_file=path)['PORTAL_CIDRS'] == values['PORTAL_CIDRS']
+
+
+def test_first_website_import_keeps_loopback_only_admin_defaults(tmp_path):
+    root = fresh(tmp_path / 'gateway')
+    data = export()
+    data['gateway']['trusted_cidrs'] = []
+    path = tmp_path / 'network.private.json'
+    path.write_text(json.dumps(data))
+    values = settings.prepare(root, network_file=path)
+    assert values['TRUSTED_CIDRS'] == '127.0.0.1/32,::1/128'
