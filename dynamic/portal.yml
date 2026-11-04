@@ -4,11 +4,21 @@ http:
     user-portal:
       rule: {{ printf "Host(`%s`) && (Path(`/portal`) || Path(`/api/portal`) || PathPrefix(`/api/portal/`) || PathPrefix(`/static/`))" (env "OPENVPN_HOST") | toJson }}
       priority: 200
-      entryPoints: [websecure, portal]
+      entryPoints: [websecure]
       service: openvpn
-      middlewares: [portal-only]
+      middlewares: [portal-only, portal-boundary]
+      tls: {}
+    guest-website:
+      rule: {{ printf "Host(`%s`)" (env "OPENVPN_HOST") | toJson }}
+      entryPoints: [portal]
+      service: openvpn
+      middlewares: [portal-only, portal-boundary]
       tls: {}
   middlewares:
+    portal-boundary:
+      headers:
+        customRequestHeaders:
+          X-OpenVPN-Portal-Only: "1"
     portal-only:
       ipAllowList:
         # Match the connection source, never an untrusted X-Forwarded-For header.

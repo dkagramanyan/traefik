@@ -35,7 +35,12 @@ def test_private_portal_routes(tmp_path, guest_enabled):
 
     class Backend(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            self.send_response(200)
+            # Model the service-owned boundary. Actual application middleware
+            # is tested in openvpn-server; Traefik must always supply the flag.
+            restricted = self.headers.get('X-OpenVPN-Portal-Only') == '1'
+            permitted = self.path in ('/portal', '/api/portal') or self.path.startswith(('/api/portal/', '/static/'))
+            status = 303 if restricted and self.path == '/' else 404 if restricted and not permitted else 200
+            self.send_response(status)
             self.end_headers()
             self.wfile.write(b"backend-ok")
 
@@ -104,7 +109,8 @@ def test_private_portal_routes(tmp_path, guest_enabled):
                     assert request(entry, "127.0.0.3", path, method="POST") == (200 if guest_enabled else 403)
                     assert request(entry, "127.0.0.4", path, method="POST") == 403
                 for path in ("/", "/api/clients", "/internal/relay-sign", "/portal-admin", "/api/portal-admin"):
-                    assert request(entry, "127.0.0.3", path) == (403 if entry == "websecure" else 404)
+                    expected = 403 if entry == 'websecure' or not guest_enabled else 303 if path == '/' else 404
+                    assert request(entry, "127.0.0.3", path) == expected
             assert request("websecure", "127.0.0.2", "/api/clients") == 200
             assert request("portal", "127.0.0.2", "/api/clients") == 404
             assert request("portal", "127.0.0.2", "/portal", "grafana.example.test") == 404

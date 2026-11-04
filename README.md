@@ -194,46 +194,42 @@ does not change the gateway's existing listener ports or router port forwards.
 
 ### Private portal for LAN, OpenVPN guests and Apple Relay guests
 
-For guests that already reach this gateway, use the normal HTTPS portal route
-with a portal-only source allowlist. Enabling guest portal access in the UI adds
-the guest subnet to `PORTAL_CIDRS`, without adding it to `TRUSTED_CIDRS`.
-Allow the source address Traefik actually receives: either guest IPs or the
-VPN/relay server's egress IP after NAT. Portal users still authenticate to download
-their own profiles. This mode requires no dedicated listener configuration.
+Configure guest access in the OpenVPN UI with **Allow guests to use the OpenVPN
+website**. It suggests the gateway address, website DNS answers and a private
+website listener. Detailed overrides remain under **Advanced settings → Private
+services and website routing**. Export and deploy the gateway settings before
+restarting VPN.
 
-The dedicated listener below is an optional advanced route for networks whose
-guest LAN blocks prevent that normal path; the allowlist does not change those
-blocks or your existing port forwarding.
+The guest subnet and VPN/relay server egress IP belong in `PORTAL_CIDRS`, separate
+from `TRUSTED_CIDRS` for other private services. Filtering uses the connection
+source address: [Traefik's IPAllowList](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/ipallowlist/)
+can see a NAT egress address instead of an individual guest. A forged forwarded
+header cannot grant access.
 
-Enter the portal hostname, dedicated LAN listener address/port, and every IPv4
-address its DNS can return. Use a dedicated port such as 9443, not the gateway's
-normal HTTPS port or the application's direct backend port. Enter the portal's
-allowed source networks, including the VPN/relay server's actual egress address.
-Leave the regular private-service networks limited to administrators/full-access
-clients. Keep the dedicated listener off WAN port forwards.
+The isolated listener, normally gateway IPv4:9443, forwards only the OpenVPN
+hostname. It supplies `X-OpenVPN-Portal-Only: 1`; the OpenVPN service owns the
+URL boundary and returns 404 for administrative APIs, even with an admin cookie.
+Opening its root redirects to `/portal`. This header only restricts access and
+never grants authentication or permissions. TLS and source filtering remain in
+Traefik; profile signing remains next to the gateway's private certificate keys.
+Update OpenVPN before deploying this route contract.
 
-Deploy the downloaded Traefik settings first. Then save the private portal as
-**enabled** and use **Save and restart VPN**. This briefly reconnects VPN clients.
-The listener address can be exported while guest access is still disabled, so
-this order does not require enabling guest access before the gateway is ready.
-The same UI stores the VPN subnet, dynamic pool, guest range, DNS, pushed routes,
-LAN blocks, extra guest blocks and trusted proxy addresses. Relay changes apply
-to new requests and to existing connections through periodic authorization.
+The browser URL stays `https://your-openvpn-host/portal`. The VPN/relay service
+routes only guest website traffic to the isolated listener, leaving other LAN
+blocks intact. Other hostnames on that listener return 404. Keep it private;
+it needs no WAN port forward. The shared HTTPS listener retains its separate
+personal-portal path router so existing administrator access still works.
 
-The URL remains `https://your-portal-host/portal`. OpenVPN redirects only guest
-TCP 443 traffic to the explicitly configured addresses; authenticated relay
-clients use the same dedicated listener. Its HTTP router serves only portal
-pages, APIs and assets. Administrative paths have no router on that listener.
-The public HTTPS listener requires an allowed source address for the portal.
-Source filtering uses the connection address, not client-supplied forwarded
-headers. Preserve public client addresses through any upstream proxy/NAT.
+A listener can be exported before guest access is enabled. After deployment,
+use **Save and restart VPN** to apply the website exception. This briefly
+reconnects VPN clients. Older allowlist-only exports remain accepted for
+networks with an existing route; they do not bypass guest destination blocks.
 
-Verify after deployment: LAN and both guest transports can log in/download;
-admin paths fail through guest transports; an external connection with VPN/relay
-disabled receives 403 for `/portal`. The dedicated listener must return 404 for
-`/api/clients`, even from an allowed LAN source. Existing guest IPv6 restrictions
-remain in effect. First-time users receive their initial profile privately or
-access the portal from the LAN.
+Verify after deployment: LAN and both guest transports can sign in/download;
+other private websites and administrator APIs fail through the isolated route;
+an external connection with VPN/relay disabled receives 403 for `/portal`.
+The private listener returns 404 for `/api/clients`, even from an allowed LAN
+source. First-time users receive their initial profile privately or from the LAN.
 
 ### Automatic profile signing
 
@@ -314,3 +310,23 @@ agent forwarding to a temporary remote-write receiver. Temporary containers and
 networks are removed afterwards. Migration tests reproduce root-owned configuration
 files, check scoped permission repair, and verify legacy bcrypt logins. CI also
 builds the pinned profile signer.
+
+## Production update
+
+Update OpenVPN/relay first using that repository's
+[production guide](https://github.com/dkagramanyan/openvpn-server#production-update-openvpnrelay-and-traefik).
+In its Settings page, review the detected addresses and download
+`network.private.json`. Copy that file into `~/traefik/` on the gateway, then run:
+
+```sh
+cd ~/traefik &&
+git pull --ff-only &&
+test -f ./network.private.json &&
+./manage setup --network-file ./network.private.json &&
+sudo docker compose config --quiet &&
+sudo docker compose up -d --build --remove-orphans
+```
+
+Use the actual downloaded file. `/path/to/network.private.json` is a placeholder,
+not a file provided by Git. Preserve `.env`, certificates, ACME state and signing
+credentials. Apply the gateway before restarting VPN for a website routing change.
