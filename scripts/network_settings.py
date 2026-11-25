@@ -5,8 +5,12 @@ it is executed or used as a template.
 """
 import ipaddress
 import json
+from pathlib import Path
 import re
+import sys
 from urllib.parse import urlsplit
+
+import yaml
 
 VERSION = 2
 HOSTNAME = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
@@ -81,15 +85,38 @@ def guest_links(items, domain, reserved):
     return result
 
 
-def link_routes(links, values):
+# Files of this repository in dynamic/; every other plain-YAML file there is the operator's own.
+OWN_DYNAMIC = {"native-services.yml", "portal.yml", "certs.yml"}
+
+
+def own_routers(dynamic_dir):
+    """The HTTP routers of the operator's own files in dynamic/ (private.yaml and the like).
+    Files with Go templates are not plain YAML and are skipped."""
+    routers = {}
+    if not dynamic_dir or not Path(dynamic_dir).is_dir():
+        return routers
+    for path in sorted(Path(dynamic_dir).iterdir()):
+        if path.name in OWN_DYNAMIC or path.suffix not in (".yml", ".yaml"):
+            continue
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+            routers.update((data.get("http") or {}).get("routers") or {})
+        except (yaml.YAMLError, OSError, AttributeError):
+            continue
+    return routers
+
+
+def link_routes(links, values, dynamic_dir=None):
     """Routers for the guest links on the portal listener, each using the
-    service of the gateway's existing route for that hostname."""
+    service of the gateway's existing route for that hostname. A link whose
+    hostname has no such route is left out with a warning."""
     services = {}
     for item in json.loads(values.get("SERVICE_ROUTES_JSON") or "[]"):
         if not item.get("paths"):
             services.setdefault(item["host"], ("custom-" + item["name"], []))
     imported = json.loads(values.get("IMPORTED_DYNAMIC_JSON") or "{}")
-    for router in imported.get("http", {}).get("routers", {}).values():
+    routers = list(imported.get("http", {}).get("routers", {}).values()) + list(own_routers(dynamic_dir).values())
+    for router in routers:
         match = re.fullmatch(r"Host\(`([^`]+)`\)", str(router.get("rule", "")).strip())
         if match and router.get("service"):
             # The guest listener has its own source check; the private-network allowlist would pass anyway.
@@ -98,8 +125,9 @@ def link_routes(links, values):
     routes = []
     for number, link in enumerate(links, 1):
         if link["host"] not in services:
-            raise ValueError(f"Guest link {link['host']}: this gateway has no route for that whole hostname; "
-                             "add the website to the gateway first")
+            print(f"Warning: guest link {link['host']} left out: no route on this gateway is exactly "
+                  f"Host(`{link['host']}`)", file=sys.stderr)
+            continue
         service, middlewares = services[link["host"]]
         rule = f"Host(`{link['host']}`)"
         path = link["path"]

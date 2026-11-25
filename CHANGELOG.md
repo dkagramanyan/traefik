@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1 - 2026-11-26
+
+* Guest links also find their website's route in your own files in
+  `dynamic/` (plain YAML such as `private.yaml`; templated files are skipped).
+* A guest link whose hostname has no route is left out with a warning; setup
+  no longer stops on it, so the rest of the gateway file (the 3x-ui panel
+  route, share links) still applies.
+
 ## 1.3.0 - 2026-11-26
 
 * The 3x-ui panel of the OpenVPN server next to its website: when the gateway

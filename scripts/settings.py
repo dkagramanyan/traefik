@@ -181,7 +181,7 @@ def prepare(root=ROOT, import_from=None, domain=None, email=None, hasher=passwor
         if not values.get(key): values[key] = value
     values["SERVICE_ROUTES_JSON"] = json.dumps(network_settings.services(json.loads(values.get("SERVICE_ROUTES_JSON", "[]")), {values["OPENVPN_HOST"], "dashboard." + domain}))
     # Guest links reuse the service of the existing route for their hostname.
-    values["GUEST_LINK_ROUTES_JSON"] = json.dumps(network_settings.link_routes(json.loads(values.get("GUEST_LINKS_JSON") or "[]"), values))
+    values["GUEST_LINK_ROUTES_JSON"] = json.dumps(network_settings.link_routes(json.loads(values.get("GUEST_LINKS_JSON") or "[]"), values, root / "dynamic"))
     if not values.get("OVPN_RELAY_SIGNER_URL"):
         values["OVPN_RELAY_SIGNER_URL"] = "https://" + values["OPENVPN_HOST"] + "/internal/relay-sign"
     if not values.get("APPLE_RELAY_URL"):

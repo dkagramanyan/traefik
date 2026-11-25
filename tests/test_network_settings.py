@@ -97,8 +97,19 @@ def test_guest_links_use_the_existing_route_of_their_hostname(tmp_path):
     imported = {"http": {"routers": {"files": {"rule": "Host(`files.example.test`)", "service": "files", "middlewares": ["trusted-only", "auth"]}}}}
     routes = network_settings.link_routes([{"host": "files.example.test", "path": "/"}], {"IMPORTED_DYNAMIC_JSON": json.dumps(imported)})
     assert routes == [{"name": "guest-link-1", "rule": "Host(`files.example.test`)", "service": "files", "middlewares": ["portal-sources", "auth"]}]
-    with pytest.raises(ValueError, match="no route"):
-        network_settings.link_routes([{"host": "missing.example.test", "path": "/"}], {})
+    assert network_settings.link_routes([{"host": "missing.example.test", "path": "/"}], {}) == []    # left out, setup goes on
+
+
+def test_guest_links_use_routes_of_the_operators_own_dynamic_files(tmp_path, capsys):
+    (tmp_path / "private.yaml").write_text(
+        "http:\n  routers:\n    browser-pile:\n      rule: \"Host(`browser.pile.example.test`)\"\n"
+        "      service: browser-pile\n      middlewares: [trusted-only]\n")
+    (tmp_path / "public.yml").write_text('http:\n  routers:\n    x:\n      rule: {{ printf "Host(`a`)" | toJson }}\n')  # a template: skipped
+    links = [{"host": "browser.pile.example.test", "path": "/"}, {"host": "gone.example.test", "path": "/"}]
+    routes = network_settings.link_routes(links, {}, tmp_path)
+    assert routes == [{"name": "guest-link-1", "rule": "Host(`browser.pile.example.test`)", "service": "browser-pile",
+                       "middlewares": ["portal-sources"]}]
+    assert "gone.example.test left out" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("case", ["old_version", "public_portal", "wide_network", "template_url", "string_bool",
