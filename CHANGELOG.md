@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0 - 2026-11-26
+
+* The 3x-ui panel of the OpenVPN server next to its website: when the gateway
+  file has `xui_panel` (OpenVPN UI 2.9.0), router `xui-panel` serves
+  `OPENVPN_HOST` paths under the panel's random base path from `BACKEND_XUI`,
+  for `TRUSTED_CIDRS` only. Without it the route is gone.
+
 ## 1.2.0 - 2026-11-26
 
 * One-time profile links of the OpenVPN server open from anywhere: router

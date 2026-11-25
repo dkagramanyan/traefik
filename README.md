@@ -213,7 +213,9 @@ The regular HTTPS listener has no portal exception: the OpenVPN website there
 is for `TRUSTED_CIDRS` only, except one-time profile links. `OPENVPN_HOST`
 with a path under `/p/` is open from anywhere (router `openvpn-share`, at most
 30 requests a minute per address), so a link sent to a new user works before
-they have a VPN.
+they have a VPN. The OpenVPN server's 3x-ui panel shares the hostname too:
+with `xui_panel` in the gateway file, `OPENVPN_HOST` paths under the panel's
+random base path go to the panel (router `xui-panel`, trusted networks only).
 
 Check after deploying: from the OpenVPN server,
 `curl -k --resolve openvpn.<domain>:9443:<gateway ip> https://openvpn.<domain>:9443/api/clients`

@@ -158,6 +158,13 @@ def from_file(path):
         if data.get("guest_links") is not None:   # absent keeps the existing links
             reserved = {values["OPENVPN_HOST"], "dashboard." + values["DOMAIN"], values.get("APPLE_RELAY_HOST", "")}
             values["GUEST_LINKS_JSON"] = json.dumps(guest_links(data["guest_links"], values["DOMAIN"], reserved))
+        # The 3x-ui panel of the OpenVPN server, under its random base path on the OpenVPN hostname.
+        values["XUI_PANEL_PATH"], values["BACKEND_XUI"] = "", ""
+        if data.get("xui_panel"):
+            path = data["xui_panel"]["path"]
+            if not isinstance(path, str) or not re.fullmatch(r"/[A-Za-z0-9_-]{4,64}/", path):
+                raise ValueError("The 3x-ui panel path must look like /random-text/")
+            values["XUI_PANEL_PATH"], values["BACKEND_XUI"] = path, url(data["xui_panel"]["backend"])
         if data.get("services") is not None:   # None keeps the existing services
             reserved = {values["OPENVPN_HOST"], "dashboard." + values["DOMAIN"]}
             values["SERVICE_ROUTES_JSON"] = json.dumps(services(data["services"], reserved))

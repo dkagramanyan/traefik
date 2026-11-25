@@ -64,6 +64,8 @@ def test_guest_portal_routes(tmp_path, server_listed):
         {"name": "status", "host": "status.example.test", "url": values["BACKEND_OPENVPN"], "public": True, "paths": ["/health", "/public/"]},
     ])
     values["GUEST_LINK_ROUTES_JSON"] = json.dumps(network_settings.link_routes([{"host": "app.example.test", "path": "/share/abc"}], values))
+    values["XUI_PANEL_PATH"] = "/panelabc/"   # its backend is a closed port: 502 proves the request took this route
+    values["BACKEND_XUI"] = "http://127.0.0.1:9"
     dynamic = root / "dynamic"
     dynamic.mkdir()
     for name in ("native-services.yml", "portal.yml"):
@@ -121,6 +123,12 @@ def test_guest_portal_routes(tmp_path, server_listed):
             assert request("websecure", "127.0.0.2", "/api/clients") == 200
             assert request("websecure", "127.0.0.2", "/", "app.example.test") == 200
             assert request("websecure", "127.0.0.4", "/", "app.example.test") == 403
+            # The 3x-ui panel: under its path on the OpenVPN hostname, for trusted networks only.
+            assert request("websecure", "127.0.0.2", "/panelabc/login") == 502
+            assert request("websecure", "127.0.0.2", "/panelabcd") == 200          # not the panel: the OpenVPN website
+            for path in ("/panelabc/login", "/panelabc/"):
+                assert request("websecure", "127.0.0.4", path) == 403
+            assert request("portal", portal_source, "/panelabc/login") == 404
             # One-time profile links open from anywhere, on both listeners; nothing else of the website.
             for path in ("/p/abc", "/p/abc/download"):
                 assert request("websecure", "127.0.0.4", path) == 200

@@ -17,6 +17,15 @@ http:
       service: openvpn
       middlewares: [share-rate]
       tls: {}
+    {{- if env "XUI_PANEL_PATH" }}
+    # The 3x-ui panel of the OpenVPN server, for trusted networks, next to the OpenVPN website.
+    xui-panel:
+      rule: {{ printf "Host(`%s`) && PathPrefix(`%s`)" (env "OPENVPN_HOST") (env "XUI_PANEL_PATH") | toJson }}
+      entryPoints: [websecure]
+      service: xui-panel
+      middlewares: [trusted-only]
+      tls: {}
+    {{- end }}
     https-redirect:
       rule: "PathPrefix(`/`)"
       entryPoints: [web]
@@ -49,6 +58,12 @@ http:
       loadBalancer:
         servers:
         - url: {{ env "BACKEND_OPENVPN" | toJson }}
+    {{- if env "XUI_PANEL_PATH" }}
+    xui-panel:
+      loadBalancer:
+        servers:
+        - url: {{ env "BACKEND_XUI" | toJson }}
+    {{- end }}
     {{- range (env "SERVICE_ROUTES_JSON" | default "[]" | fromJson) }}
     {{ printf "custom-%s" .name | toJson }}:
       loadBalancer:

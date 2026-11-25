@@ -119,3 +119,16 @@ def test_invalid_files_are_rejected(tmp_path, case):
     if case == "link_path": data["guest_links"] = [{"host": "app.example.test", "path": "/{{env}}"}]
     with pytest.raises(ValueError):
         network_settings.from_file(write(tmp_path, data))
+
+
+def test_the_3x_ui_panel_route_comes_from_the_gateway_file(tmp_path):
+    values = network_settings.from_file(write(tmp_path, export()))
+    assert (values["XUI_PANEL_PATH"], values["BACKEND_XUI"]) == ("", "")     # none: no route
+    panel = {"path": "/AbC123xyz/", "backend": "http://192.0.2.20:2053"}
+    values = network_settings.from_file(write(tmp_path, export(xui_panel=panel)))
+    assert (values["XUI_PANEL_PATH"], values["BACKEND_XUI"]) == ("/AbC123xyz/", "http://192.0.2.20:2053")
+    for path in ("/", "/a/", "AbC123xyz/", "/AbC123xyz", "/x`)||Host(`y/"):
+        with pytest.raises(ValueError):
+            network_settings.from_file(write(tmp_path, export(xui_panel={**panel, "path": path})))
+    with pytest.raises(ValueError):
+        network_settings.from_file(write(tmp_path, export(xui_panel={**panel, "backend": "ftp://192.0.2.20"})))
