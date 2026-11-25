@@ -38,7 +38,7 @@ def test_guest_portal_routes(tmp_path, server_listed):
             # Model the service-owned boundary. Actual application middleware
             # is tested in openvpn-server; Traefik must always supply the flag.
             restricted = self.headers.get('X-OpenVPN-Portal-Only') == '1'
-            permitted = self.path in ('/portal', '/api/portal') or self.path.startswith(('/api/portal/', '/static/'))
+            permitted = self.path in ('/portal', '/api/portal') or self.path.startswith(('/api/portal/', '/static/', '/p/'))
             status = 303 if restricted and self.path == '/' else 404 if restricted and not permitted else 200
             self.send_response(status)
             self.end_headers()
@@ -121,6 +121,12 @@ def test_guest_portal_routes(tmp_path, server_listed):
             assert request("websecure", "127.0.0.2", "/api/clients") == 200
             assert request("websecure", "127.0.0.2", "/", "app.example.test") == 200
             assert request("websecure", "127.0.0.4", "/", "app.example.test") == 403
+            # One-time profile links open from anywhere, on both listeners; nothing else of the website.
+            for path in ("/p/abc", "/p/abc/download"):
+                assert request("websecure", "127.0.0.4", path) == 200
+                assert request("portal", portal_source, path) == 200
+            for path in ("/p", "/pabc", "/api/clients", "/"):
+                assert request("websecure", "127.0.0.4", path) == 403
             for path in ("/health", "/public/example"):
                 assert request("websecure", "127.0.0.4", path, "status.example.test") == 200
             for path in ("/admin", "/publicity"):

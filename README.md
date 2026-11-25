@@ -210,7 +210,10 @@ That route's middlewares come along, except `trusted-only`. A link to a
 hostname without such a route stops setup with an error.
 
 The regular HTTPS listener has no portal exception: the OpenVPN website there
-is for `TRUSTED_CIDRS` only.
+is for `TRUSTED_CIDRS` only, except one-time profile links. `OPENVPN_HOST`
+with a path under `/p/` is open from anywhere (router `openvpn-share`, at most
+30 requests a minute per address), so a link sent to a new user works before
+they have a VPN.
 
 Check after deploying: from the OpenVPN server,
 `curl -k --resolve openvpn.<domain>:9443:<gateway ip> https://openvpn.<domain>:9443/api/clients`

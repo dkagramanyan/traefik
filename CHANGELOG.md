@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0 - 2026-11-26
+
+* One-time profile links of the OpenVPN server open from anywhere: router
+  `openvpn-share` routes `OPENVPN_HOST` paths under `/p/` on the public HTTPS
+  listener, with a per-address rate limit. The rest of the OpenVPN website
+  stays for trusted networks.
+
 ## 1.1.0 - 2026-11-04
 
 * Guest links from the OpenVPN UI's gateway file (`guest_links`): a router per

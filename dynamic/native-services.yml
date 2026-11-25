@@ -10,6 +10,13 @@ http:
       service: openvpn
       middlewares: [trusted-only]
       tls: {}
+    # One-time profile links (/p/<token>) open from anywhere: the only public path of the website.
+    openvpn-share:
+      rule: {{ printf "Host(`%s`) && PathPrefix(`/p/`)" (env "OPENVPN_HOST") | toJson }}
+      entryPoints: [websecure]
+      service: openvpn
+      middlewares: [share-rate]
+      tls: {}
     https-redirect:
       rule: "PathPrefix(`/`)"
       entryPoints: [web]
@@ -58,6 +65,12 @@ http:
     trusted-only:
       ipAllowList:
         sourceRange: {{ env "TRUSTED_CIDRS" | splitList "," | toJson }}
+    # The OpenVPN UI also slows down wrong tokens; this caps the request rate per address.
+    share-rate:
+      rateLimit:
+        average: 30
+        period: 1m
+        burst: 10
     https-redirect:
       redirectScheme:
         scheme: https
