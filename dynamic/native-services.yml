@@ -17,6 +17,14 @@ http:
       service: openvpn
       middlewares: [share-rate]
       tls: {}
+    # Device-bound Apple relay profiles fetch their certificate here while they install (ACME,
+    # signed requests; the OpenVPN server checks each profile's one-time code).
+    openvpn-enroll:
+      rule: {{ printf "Host(`%s`) && PathPrefix(`/acme/`)" (env "OPENVPN_HOST") | toJson }}
+      entryPoints: [websecure]
+      service: openvpn
+      middlewares: [enroll-rate]
+      tls: {}
     {{- if env "XUI_PANEL_PATH" }}
     # The 3x-ui panel of the OpenVPN server, for trusted networks, next to the OpenVPN website.
     xui-panel:
@@ -86,6 +94,12 @@ http:
         average: 30
         period: 1m
         burst: 10
+    # One enrolment is about ten requests within a second.
+    enroll-rate:
+      rateLimit:
+        average: 120
+        period: 1m
+        burst: 40
     https-redirect:
       redirectScheme:
         scheme: https

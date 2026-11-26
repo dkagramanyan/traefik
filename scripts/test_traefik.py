@@ -139,7 +139,7 @@ socketserver.TCPServer(("0.0.0.0",8444),Echo).serve_forever()
                     return response.read()
             expected_routes = {
                 name + "@file" for name in (
-                    "openvpn", "openvpn-share", "https-redirect", "custom-private", "custom-public",
+                    "openvpn", "openvpn-share", "openvpn-enroll", "https-redirect", "custom-private", "custom-public",
                     "guest-portal", "dashboard-test", "apple-relay",
                 )
             }
@@ -158,6 +158,8 @@ socketserver.TCPServer(("0.0.0.0",8444),Echo).serve_forever()
             for name in ("openvpn", "custom-private"):
                 assert "trusted-only@file" in loaded[name + "@file"]["middlewares"]
             assert loaded["openvpn-share@file"]["middlewares"] == ["share-rate@file"]
+            assert loaded["openvpn-enroll@file"]["middlewares"] == ["enroll-rate@file"]
+            assert "PathPrefix(`/acme/`)" in loaded["openvpn-enroll@file"]["rule"]
             assert loaded["guest-portal@file"]["entryPoints"] == ["portal"]
             assert loaded["guest-portal@file"]["middlewares"] == ["portal-sources@file", "portal-only@file"]
             # Unlisted sources cannot reach the portal or management APIs.

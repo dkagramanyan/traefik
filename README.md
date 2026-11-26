@@ -216,6 +216,10 @@ with a path under `/p/` is open from anywhere (router `openvpn-share`, at most
 they have a VPN. The OpenVPN server's 3x-ui panel shares the hostname too:
 with `xui_panel` in the gateway file, `OPENVPN_HOST` paths under the panel's
 random base path go to the panel (router `xui-panel`, trusted networks only).
+Paths under `/acme/` are open from anywhere as well (router `openvpn-enroll`, at
+most 120 requests a minute per address): a device-bound Apple relay profile
+(OpenVPN server 2.10) fetches its certificate there while it installs, with
+requests signed by the phone and a one-time code the OpenVPN server checks.
 
 Check after deploying: from the OpenVPN server,
 `curl -k --resolve openvpn.<domain>:9443:<gateway ip> https://openvpn.<domain>:9443/api/clients`
@@ -237,6 +241,11 @@ On the OpenVPN server, open **Relay → Profile signing** and enter
 `OVPN_RELAY_SIGNER_URL` and `RELAY_PROFILE_SIGNING_TOKEN` in its `.env`). The
 OpenVPN UI checks every signed file before handing it out. Installed profiles
 keep working when the signer is down; only new downloads need it.
+
+Device-bound profiles carry an ACME payload as well; the signer signs them only
+when its `DirectoryURL` is `PROFILE_SIGNER_ACME_DIRECTORY` (by default
+`https://<OPENVPN_HOST>/acme/directory`), the key is made in the Secure Enclave
+(`HardwareBound`) and the relay logs in with that identity.
 
 ## Metrics worker and Docker logs
 

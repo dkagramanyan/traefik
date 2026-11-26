@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.0 - 2026-11-27
+
+For Apple relay profiles that work on one device only (OpenVPN server 2.10).
+
+* Router `openvpn-enroll`: `OPENVPN_HOST` paths under `/acme/` open from
+  anywhere (at most 120 requests a minute per address). A device-bound
+  profile fetches its certificate there while it installs.
+* The profile signer is built from OpenVPN server 2.10.0 and signs
+  device-bound profiles for `PROFILE_SIGNER_ACME_DIRECTORY` only (default
+  `https://<OPENVPN_HOST>/acme/directory`). If your `.env` pins
+  `PROFILE_SIGNER_SOURCE`, remove that line or copy it from `.env.example`.
+* Update: `git pull`, `./manage setup`,
+  `sudo docker compose --profile profile-signing up -d --build`.
+
 ## 1.3.1 - 2026-11-26
 
 * Guest links also find their website's route in your own files in

@@ -108,7 +108,7 @@ services:
   profile-signer:
     image: openvpn-profile-signer:local
     build:
-      context: ${PROFILE_SIGNER_SOURCE:-https://github.com/dkagramanyan/openvpn-server.git#ffd1ef79c1a29294607ca52424d4216744db92b1}
+      context: ${PROFILE_SIGNER_SOURCE:-https://github.com/dkagramanyan/openvpn-server.git#f42e5b527772ddfc4f4e148ea381faa41ab0cb16}
       dockerfile: signer/Dockerfile
     profiles: [profile-signing]
     restart: unless-stopped
@@ -116,6 +116,8 @@ services:
       PROFILE_SIGNER_TOKEN: ${RELAY_PROFILE_SIGNING_TOKEN:-}
       PROFILE_SIGNER_HOSTNAME: ${APPLE_RELAY_HOST:-${DOMAIN}}
       PROFILE_SIGNER_RELAY_URL: ${APPLE_RELAY_URL:-https://${DOMAIN}:8443}
+      # Device-bound profiles (OpenVPN server 2.10) are signed only with this ACME directory.
+      PROFILE_SIGNER_ACME_DIRECTORY: ${PROFILE_SIGNER_ACME_DIRECTORY:-https://${OPENVPN_HOST}/acme/directory}
     volumes: ["${ACME_STORAGE_DIR:-./letsencrypt}:/letsencrypt:ro"]
     networks: [proxy]
     cap_drop: [ALL]
